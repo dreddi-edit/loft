@@ -1,0 +1,116 @@
+{
+  "theme": "Light",
+  "archetype": "4 (Swiss & High-Contrast / Editorial Minimalist)",
+  "colors": {
+    "background": {
+      "primary": "#FFFFFF",
+      "secondary": "#FAFAFA",
+      "accent": "#F4F4F5"
+    },
+    "text": {
+      "primary": "#09090B",
+      "secondary": "#52525B",
+      "inverse": "#FFFFFF"
+    },
+    "brand": {
+      "primary": "#18181B",
+      "hover": "#27272A",
+      "border": "#E4E4E7"
+    }
+  },
+  "typography": {
+    "fonts": {
+      "heading": "Cormorant Garamond, serif",
+      "body": "Outfit, sans-serif"
+    },
+    "hierarchy": {
+      "h1": "text-5xl sm:text-6xl lg:text-7xl font-light tracking-tight leading-none",
+      "h2": "text-3xl sm:text-4xl lg:text-5xl font-light tracking-tight leading-tight",
+      "h3": "text-xl sm:text-2xl font-medium tracking-tight",
+      "h4": "text-lg font-medium",
+      "body": "text-base sm:text-lg text-zinc-600 leading-relaxed",
+      "overline": "text-xs font-semibold uppercase tracking-[0.2em] text-zinc-500"
+    }
+  },
+  "spacing_and_layout": {
+    "section_padding": "py-24 sm:py-32",
+    "container": "max-w-7xl mx-auto px-6 sm:px-8",
+    "grid_bento": "grid grid-cols-1 md:grid-cols-12 gap-6 sm:gap-8",
+    "radius": "rounded-none"
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-zinc-900 text-white hover:bg-zinc-800 rounded-none px-8 py-4 transition-all duration-300 flex items-center justify-center font-medium",
+      "secondary": "bg-transparent text-zinc-900 border border-zinc-900 hover:bg-zinc-100 rounded-none px-8 py-4 transition-all duration-300 flex items-center justify-center font-medium"
+    },
+    "navigation": {
+      "style": "fixed top-0 w-full z-50 bg-white/80 backdrop-blur-xl border-b border-zinc-200 transition-all duration-300"
+    },
+    "cards": {
+      "style": "bg-zinc-50 border border-zinc-200 p-8 rounded-none transition-transform hover:-translate-y-1 duration-300"
+    }
+  },
+  "media": {
+    "images": [
+      {
+        "category": "hero",
+        "url": "https://images.unsplash.com/photo-1773069459487-3d2d7bb4532e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1Mjh8MHwxfHNlYXJjaHwxfHxicmlnaHQlMjBtb2Rlcm4lMjBpbmR1c3RyaWFsJTIwbG9mdCUyMGludGVyaW9yfGVufDB8fHx8MTc3NDk5ODk0OXww&ixlib=rb-4.1.0&q=85",
+        "alt": "New York style loft interior with brick walls",
+        "description": "Main hero background or split-pane image"
+      },
+      {
+        "category": "room_main",
+        "url": "https://images.pexels.com/photos/20337840/pexels-photo-20337840.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "alt": "Spacious loft living room area",
+        "description": "Image for the main 260sqm space section"
+      },
+      {
+        "category": "room_meeting",
+        "url": "https://images.pexels.com/photos/9300740/pexels-photo-9300740.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "alt": "Minimalist conference room",
+        "description": "Image for the meeting/conference room section"
+      },
+      {
+        "category": "room_studio",
+        "url": "https://images.pexels.com/photos/6044645/pexels-photo-6044645.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "alt": "Photography studio setup",
+        "description": "Image for the photo studio/breakout space"
+      },
+      {
+        "category": "gallery",
+        "url": "https://images.pexels.com/photos/29252608/pexels-photo-29252608.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "alt": "Stylish loft apartment interior",
+        "description": "Gallery image 1"
+      },
+      {
+        "category": "gallery",
+        "url": "https://images.unsplash.com/photo-1765728614529-4749706523d9?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1Mjh8MHwxfHNlYXJjaHw0fHxicmlnaHQlMjBtb2Rlcm4lMjBpbmR1c3RyaWFsJTIwbG9mdCUyMGludGVyaW9yfGVufDB8fHx8MTc3NDk5ODk0OXww&ixlib=rb-4.1.0&q=85",
+        "alt": "Modern loft with accent chairs",
+        "description": "Gallery image 2"
+      }
+    ]
+  },
+  "animations": {
+    "scroll": "Use Framer Motion for fade-in-up on scroll for all sections. Stagger children in grids.",
+    "hover": "Subtle image scaling (scale-105) on hover within hidden overflow containers."
+  },
+  "accessibility": {
+    "contrast": "Ensure all text over images has a dark gradient overlay or backdrop blur. Strictly follow minimum contrast ratios.",
+    "focus": "Use focus:ring-2 focus:ring-zinc-900 focus:outline-none for all interactive elements.",
+    "motion": "Respect prefers-reduced-motion media query."
+  },
+  "specific_instructions_to_main_agent": [
+    "Build a single-page scrolling architecture with sections: Hero, About, Spaces, Events, Amenities, Gallery, Pricing, Booking, Contact.",
+    "Import Cormorant Garamond and Outfit fonts from Google Fonts in index.css.",
+    "Implement a bilingual toggle (DE/EN) in the header. Use standard React state or a lightweight context to swap text strings.",
+    "Use 'react-fast-marquee' for the Event Occasions section to create an 'Editorial Ribbon' of text (e.g. 'Corporate Events • Photo Shoots • Offsite Meetings • Film Production'). Make it slow and subtle.",
+    "Forms: Use Shadcn UI for the Booking form, including a Date/Time picker (Calendar). Make the inputs minimalist (border-b only or very subtle full borders, rounded-none).",
+    "Add 'data-testid' to all buttons, links, and form inputs (e.g., 'data-testid=\"nav-booking-link\"').",
+    "Images must be large and editorial. Maximize negative space. Do not cram elements together. Use bento-style layouts where appropriate.",
+    "Override any default Shadcn 'rounded-md' to 'rounded-none' to enforce the sharp, brutalist/editorial aesthetic.",
+    "The maximum capacity is 50 seated / 60 standing, and total space is approx. 260 sqm. Mention these prominently in the Amenities or About section.",
+    "Ensure 'No birthday or bachelor party bookings' is clearly stated in the pricing or booking section.",
+    "For the Spaces section, use the 'Tetris Grid' pattern: a bento-style layout mixing wide and square images overlapping with descriptions.",
+    "For the Location Map in Contact section, embed an OpenStreetMap iframe pointing to Düsseldorf Friedrichstadt, customized with a greyscale filter via CSS if possible, or use a placeholder map block."
+  ]
+}
