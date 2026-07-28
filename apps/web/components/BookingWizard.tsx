@@ -27,7 +27,8 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [appointmentId, setAppointmentId] = useState<string | null>(null);
-  const [clientSecret, setClientSecret] = useState<string | null>(null);
+  const [paymentId, setPaymentId] = useState<string | null>(null);
+  const [googlePayReady, setGooglePayReady] = useState(false);
 
   const [serviceSlug, setServiceSlug] = useState("haircut-women");
   const [staffId, setStaffId] = useState("");
@@ -113,7 +114,7 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
     }
   }
 
-  async function createPaymentIntent() {
+  async function createGooglePayCheckout() {
     if (!appointmentId) return;
     setLoading(true);
     setError(null);
@@ -129,8 +130,9 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
         }),
       });
       const json = await response.json();
-      if (!response.ok) throw new Error(json.message ?? "PAYMENT_INTENT_FAILED");
-      setClientSecret(json.data.clientSecret);
+      if (!response.ok) throw new Error(json.message ?? "PAYMENT_CHECKOUT_FAILED");
+      setPaymentId(json.data.paymentId);
+      setGooglePayReady(Boolean(json.data.googlePayRequest));
     } catch (err) {
       setError(err instanceof Error ? err.message : t(locale, "error_generic"));
     } finally {
@@ -159,7 +161,7 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
       return;
     }
     if (step === "payment") {
-      await createPaymentIntent();
+      await createGooglePayCheckout();
     }
   }
 
@@ -231,9 +233,9 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
                 Total: {(selectedService.priceCents / 100).toFixed(2)} EUR
               </p>
             ) : null}
-            {clientSecret ? (
+            {googlePayReady && paymentId ? (
               <p style={{ color: "var(--hs-success)" }}>
-                PaymentIntent ready (test mode). Client secret: {clientSecret.slice(0, 24)}…
+                Google Pay checkout ready. Payment ID: {paymentId.slice(0, 12)}…
               </p>
             ) : null}
           </div>

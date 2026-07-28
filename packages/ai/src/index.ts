@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { chatbotSystemPrompts } from "@hair-simo/i18n";
 
 export type SupportedLocale = "de" | "it" | "fr" | "en";
 export type Intent =
@@ -15,6 +16,14 @@ export const aiRequestSchema = z.object({
   customerId: z.string().optional(),
   serviceId: z.string().optional(),
   appointmentId: z.string().optional(),
+  conversationHistory: z
+    .array(
+      z.object({
+        role: z.enum(["user", "model"]),
+        text: z.string(),
+      }),
+    )
+    .optional(),
 });
 
 export type Toolset = {
@@ -39,6 +48,31 @@ export function detectIntent(input: string): Intent {
   if (/price|preis|prix|prezzo/i.test(input)) return "price_lookup";
   if (/where|dove|adresse|adresse|standort/i.test(input)) return "faq_location";
   return "faq_opening_hours";
+}
+
+async function executeToolCall(
+  name: string,
+  args: Record<string, unknown>,
+  tools: Toolset,
+  payload: z.infer<typeof aiRequestSchema>,
+): Promise<string> {
+  switch (name) {
+    case "checkAvailability":
+      return tools.checkAvailability(String(args.serviceId ?? payload.serviceId ?? "haircut-women"));
+    case "createBooking":
+      return tools.createBooking(
+        String(args.serviceId ?? payload.serviceId ?? "haircut-women"),
+        args.customerId ? String(args.customerId) : payload.customerId,
+      );
+    case "rescheduleBooking":
+      return tools.rescheduleBooking(String(args.appointmentId ?? payload.appointmentId ?? "unknown"));
+    case "cancelBooking":
+      return tools.cancelBooking(String(args.appointmentId ?? payload.appointmentId ?? "unknown"));
+    case "getServiceInfo":
+      return tools.getServiceInfo(String(args.serviceId ?? payload.serviceId ?? "haircut-women"));
+    default:
+      return "I can help with bookings, prices, opening hours, and location.";
+  }
 }
 
 export async function runIntentTooling(payload: z.infer<typeof aiRequestSchema>, tools: Toolset) {
@@ -66,6 +100,56 @@ export async function runIntentTooling(payload: z.infer<typeof aiRequestSchema>,
         intent,
         response: "Mon-Fri 09:00-20:00, Sat 08:00-16:00, Sunday closed.",
       };
+  }
+}
+
+export async function runAssistant(payload: z.infer<typeof aiRequestSchema>, tools: Toolset) {
+  const locale = payload.locale ?? detectLocaleFromInput(payload.text);
+
+  try {
+    const { isGcpConfigured, runGeminiAssistant, synthesizeGeminiResponse } = await import("@hair-simo/gcp");
+    if (!isGcpConfigured()) {
+      return runIntentTooling(payload, tools);
+    }
+
+    const systemPrompt = chatbotSystemPrompts[locale] ?? chatbotSystemPrompts.en;
+    const gemini = await runGeminiAssistant({
+      text: payload.text,
+      locale,
+      systemPrompt,
+      conversationHistory: payload.conversationHistory,
+    });
+
+    if (gemini.toolCalls.length === 0) {
+      return {
+        locale: gemini.locale,
+        intent: gemini.intent,
+        response: gemini.text || (await runIntentTooling(payload, tools)).response,
+        provider: "vertex-ai-gemini" as const,
+      };
+    }
+
+    const toolResults: Array<{ name: string; result: string }> = [];
+    for (const call of gemini.toolCalls) {
+      const result = await executeToolCall(call.name, call.args, tools, payload);
+      toolResults.push({ name: call.name, result });
+    }
+
+    const response = await synthesizeGeminiResponse({
+      text: payload.text,
+      locale: gemini.locale,
+      systemPrompt,
+      toolResults,
+    });
+
+    return {
+      locale: gemini.locale,
+      intent: gemini.toolCalls[0]?.name ?? gemini.intent,
+      response,
+      provider: "vertex-ai-gemini" as const,
+    };
+  } catch {
+    return { ...(await runIntentTooling(payload, tools)), provider: "regex-fallback" as const };
   }
 }
 

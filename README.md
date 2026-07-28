@@ -1,37 +1,57 @@
 # Hair Simo Platform
 
-Production-ready multilingual salon operating system with booking, payments, AI chat/voice, and admin backoffice.
+Production-ready multilingual salon operating system on **100% Google Cloud Platform**.
 
 ## Monorepo structure
 
-- `apps/web` — public website, booking wizard, payment + AI/voice webhooks
-- `apps/admin` — authenticated backoffice with dashboard and CRUD APIs
-- `packages/core` — business services (`BookingService`, `PricingService`, `AuthService`, `NotificationService`, `RefundService`)
+- `apps/web` — public website, booking wizard, GCP webhooks (Dialogflow, Gemini, Google Pay)
+- `apps/admin` — Identity Platform authenticated backoffice
+- `packages/core` — business services
 - `packages/db` — Prisma schema, migrations, seed
-- `packages/ai` — intent detection + tool orchestration
+- `packages/ai` — Vertex AI Gemini assistant with function calling
+- `packages/gcp` — GCP client integrations (Vertex AI, STT/TTS, Identity Platform, Pub/Sub, Cloud Tasks)
 - `packages/i18n` — locale dictionaries + templates (de/it/fr/en)
 - `packages/ui` — shared design system components
+- `infra/terraform` — Cloud Run, AlloyDB, Cloud Armor, Pub/Sub, Cloud Tasks
 - `docs` — architecture, API, operations, decisions
+
+## GCP stack
+
+| Feature | Service |
+|---------|---------|
+| Hosting | Cloud Run |
+| Database | AlloyDB for PostgreSQL |
+| Chat AI | Vertex AI Gemini 2.5 Flash |
+| Voice | Dialogflow CX + Phone Gateway |
+| STT | Cloud Speech-to-Text (Chirp) |
+| TTS | Cloud Text-to-Speech (Chirp 3 HD) |
+| Auth | Identity Platform |
+| Notifications | Pub/Sub + Cloud Tasks + Gmail API |
+| Payments | Google Pay + PSP webhook |
+| Security | Cloud Armor + Secret Manager |
 
 ## Requirements
 
 - Node.js 22+
 - pnpm 10+
-- Docker (for local PostgreSQL via `docker compose`)
+- Docker (local PostgreSQL via `docker compose`)
+- GCP project (for production features)
 
-## Quick start
+## Quick start (local)
 
 ```bash
 cp .env.example .env
 # set JWT_SECRET and DATABASE_URL
 
 pnpm install
-pnpm db:setup   # starts postgres, pushes schema, seeds demo data
+pnpm db:setup
 pnpm dev
 ```
 
 - Web: http://localhost:3000
 - Admin: http://localhost:3001/login
+
+Without `GCP_PROJECT_ID`, the platform runs in local fallback mode (regex AI, JWT auth, console notifications).
 
 ### Demo admin credentials (seed)
 
@@ -46,31 +66,27 @@ pnpm lint
 pnpm typecheck
 pnpm test
 pnpm build
-pnpm db:generate
-pnpm db:push
-pnpm db:seed
+pnpm db:setup
 ```
 
-## MVP feature coverage
+## Production deployment
 
-- 4-language website (`/de`, `/it`, `/fr`, `/en`) with SEO sitemap/robots/hreflang
-- Multi-step booking wizard (service → stylist → slot → customer → payment intent)
-- Availability engine with buffers and conflict checks
-- Stripe checkout + webhook + refund endpoint
-- JWT admin auth with role-based API access (`owner`, `manager`, `staff`)
-- Admin dashboard, appointments, customers, services, staff, business hours
-- AI chat endpoints (web/WhatsApp/SMS) with booking intents
-- Twilio voice webhook with call logs + fallback handover
-- Notification reminder pipeline (email log + Twilio SMS/WhatsApp adapters)
-- GDPR-oriented consent records and audit status history
+```bash
+cd infra/terraform
+cp terraform.tfvars.example terraform.tfvars
+terraform init && terraform apply
+```
 
-## Google Cloud (later)
-
-Deploy `apps/web` and `apps/admin` to Cloud Run, PostgreSQL to Cloud SQL, secrets via Secret Manager. See `docs/architecture.md`.
+Build containers:
+```bash
+docker build -f apps/web/Dockerfile -t hair-simo-web .
+docker build -f apps/admin/Dockerfile -t hair-simo-admin .
+```
 
 ## Documentation
 
-- `docs/architecture.md`
-- `docs/api.md`
-- `docs/operations.md`
-- `docs/decisions.md`
+- `docs/architecture.md` — system design and GCP mapping
+- `docs/api.md` — API reference
+- `docs/operations.md` — runbook
+- `docs/decisions.md` — technical decisions
+- `infra/terraform/README.md` — infrastructure guide

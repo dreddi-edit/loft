@@ -1,4 +1,4 @@
-# API Reference (MVP)
+# API Reference
 
 Base URLs:
 - Web app API: `https://<web-domain>/api/*`
@@ -43,10 +43,10 @@ Request (JSON):
 }
 ```
 
-## Payments (Stripe)
+## Payments (Google Pay)
 
 ### `POST /api/payments/checkout`
-Creates Stripe PaymentIntent and local payment record.
+Creates payment record and returns Google Pay `paymentDataRequest`.
 
 ```json
 {
@@ -57,52 +57,94 @@ Creates Stripe PaymentIntent and local payment record.
 }
 ```
 
+Response:
+```json
+{
+  "data": {
+    "paymentId": "...",
+    "amountCents": 1500,
+    "googlePayRequest": { "apiVersion": 2, "...": "..." },
+    "provider": "google-pay"
+  }
+}
+```
+
 ### `POST /api/payments/webhook`
-Stripe webhook endpoint (`payment_intent.succeeded` and `payment_intent.payment_failed` handled).
+PSP/Google Pay confirmation webhook. Requires `Authorization: Bearer <GCP_PAYMENT_WEBHOOK_SECRET>`.
+
+```json
+{
+  "paymentId": "...",
+  "status": "succeeded",
+  "googlePayToken": "...",
+  "providerReference": "..."
+}
+```
 
 ## Notifications
 
 ### `POST /api/notifications/reminder`
-Creates reminder log records used by anti-no-show automations.
+Creates reminder records and dispatches via Pub/Sub/Cloud Tasks.
 
-## AI chat channels
+### `POST /api/tasks/notification`
+Cloud Tasks handler for async notification delivery. Requires `Authorization: Bearer <GCP_CLOUD_TASKS_SECRET>`.
+
+## AI chat channels (Vertex AI Gemini)
 
 ### `POST /api/chat/web`
-JSON chatbot API endpoint with tool-based intents.
+JSON chatbot endpoint with Gemini function calling.
+
+```json
+{
+  "text": "I want to book a haircut tomorrow",
+  "locale": "en",
+  "conversationHistory": []
+}
+```
 
 ### `POST /api/chat/whatsapp`
-Twilio-compatible webhook endpoint for WhatsApp.
+JSON webhook for WhatsApp Business integration via Pub/Sub worker.
 
 ### `POST /api/chat/sms`
-Twilio-compatible webhook endpoint for SMS.
+JSON webhook for SMS integration via Pub/Sub worker.
 
-## Voice
+## Voice (Dialogflow CX + Chirp)
 
-### `POST /api/voice/twilio`
-Twilio voice webhook endpoint (language detection, intent handling, call log persistence, fallback support).
+### `POST /api/voice/dialogflow`
+Dialogflow CX webhook fulfillment endpoint. Processes utterances, runs Gemini tooling, synthesizes Chirp 3 HD audio.
 
-## Admin APIs (JWT protected)
+### `POST /api/voice/synthesize`
+Direct Cloud Text-to-Speech endpoint.
 
-Authenticate via `POST /api/auth/login` (sets `admin_token` cookie).
+```json
+{
+  "text": "Welcome to Hair Simo",
+  "locale": "de"
+}
+```
 
+### `POST /api/voice/transcribe`
+Direct Cloud Speech-to-Text endpoint. Accepts multipart `audio` file.
+
+## Admin APIs (Identity Platform / JWT protected)
+
+Authenticate via:
+- `POST /api/auth/login` with Firebase `idToken` (production)
+- `POST /api/auth/login` with email/password (local dev fallback)
+
+Protected endpoints:
 - `GET /api/dashboard`
-- `GET /api/services`
-- `POST /api/services`
-- `PATCH /api/services/{id}`
+- `GET /api/services`, `POST /api/services`, `PATCH /api/services/{id}`
 - `GET /api/staff`
-- `GET /api/customers`
-- `POST /api/customers`
-- `PATCH /api/customers/{id}`
-- `GET /api/appointments`
-- `POST /api/appointments`
-- `POST /api/appointments/{id}/reschedule`
-- `POST /api/appointments/{id}/cancel`
-- `GET /api/business-hours`
-- `PUT /api/business-hours`
+- `GET /api/customers`, `POST /api/customers`, `PATCH /api/customers/{id}`
+- `GET /api/appointments`, `POST /api/appointments`
+- `POST /api/appointments/{id}/reschedule`, `POST /api/appointments/{id}/cancel`
+- `GET /api/business-hours`, `PUT /api/business-hours`
 
 ## Refunds
 
 ### `POST /api/payments/refund`
+Dispatches refund request via Pub/Sub to PSP.
 
 Error format:
 ```json

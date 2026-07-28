@@ -6,8 +6,22 @@ const authService = new AuthService();
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
+
+    if (body.idToken) {
+      const result = await authService.loginWithFirebase(body);
+      const response = NextResponse.json({ data: { session: result.session, provider: "identity-platform" } });
+      response.cookies.set("admin_token", result.idToken, {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: process.env.NODE_ENV === "production",
+        path: "/",
+        maxAge: 60 * 60 * 12,
+      });
+      return response;
+    }
+
     const result = await authService.login(body);
-    const response = NextResponse.json({ data: { session: result.session } });
+    const response = NextResponse.json({ data: { session: result.session, provider: "local-jwt" } });
     response.cookies.set("admin_token", result.token, {
       httpOnly: true,
       sameSite: "lax",

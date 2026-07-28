@@ -1,0 +1,6 @@
+project_id = "your-gcp-project-id"
+region     = "europe-west6"
+environment = "production"
+web_domain  = "hairsimo.example.com"
+admin_domain = "admin.hairsimo.example.com"
+alloydb_password = "CHANGE_ME_STRONG_PASSWORD"

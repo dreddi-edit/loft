@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { aiRequestSchema, runIntentTooling } from "@hair-simo/ai";
+import { aiRequestSchema, runAssistant } from "@hair-simo/ai";
 import { aiTools } from "../../../../lib/ai-tools";
 import { checkRateLimit } from "../../../../lib/rate-limit";
 
@@ -10,7 +10,7 @@ export async function POST(request: NextRequest) {
   }
   try {
     const payload = aiRequestSchema.parse(await request.json());
-    const result = await runIntentTooling(payload, aiTools);
+    const result = await runAssistant(payload, aiTools);
     return NextResponse.json({ data: result });
   } catch (error) {
     return NextResponse.json(

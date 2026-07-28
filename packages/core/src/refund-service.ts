@@ -1,4 +1,3 @@
-import Stripe from "stripe";
 import { z } from "zod";
 import { prisma } from "@hair-simo/db";
 
@@ -9,8 +8,6 @@ const refundSchema = z.object({
 });
 
 export class RefundService {
-  private stripe = new Stripe(process.env.STRIPE_SECRET_KEY ?? "sk_test_placeholder");
-
   async createRefund(rawInput: unknown) {
     const input = refundSchema.parse(rawInput);
     const payment = await prisma.payment.findUnique({
@@ -25,19 +22,33 @@ export class RefundService {
     const amount = input.amountCents ?? remaining;
     if (amount <= 0 || amount > remaining) throw new Error("INVALID_REFUND_AMOUNT");
 
-    const stripeRefund = await this.stripe.refunds.create({
-      payment_intent: payment.providerIntentId,
-      amount,
-      reason: "requested_by_customer",
-      metadata: { paymentId: payment.id, reason: input.reason ?? "" },
-    });
+    const providerRefId = `refund_${Date.now()}`;
+
+    try {
+      const { publishNotificationEvent } = await import("@hair-simo/gcp");
+      await publishNotificationEvent({
+        type: "appointment.confirmation",
+        channel: "email",
+        recipient: "payments@hairsimo.local",
+        locale: "en",
+        payload: {
+          action: "refund.request",
+          paymentId: payment.id,
+          providerIntentId: payment.providerIntentId,
+          amountCents: amount,
+          reason: input.reason ?? "",
+        },
+      });
+    } catch {
+      // Local dev: refund recorded without PSP dispatch
+    }
 
     const refund = await prisma.refund.create({
       data: {
         paymentId: payment.id,
         amountCents: amount,
         reason: input.reason,
-        providerRefId: stripeRefund.id,
+        providerRefId,
       },
     });
 

@@ -7,4 +7,16 @@ export default defineWorkspace([
       include: ["packages/core/**/*.test.ts"],
     },
   },
+  {
+    test: {
+      name: "gcp",
+      include: ["packages/gcp/**/*.test.ts"],
+    },
+  },
+  {
+    test: {
+      name: "ai",
+      include: ["packages/ai/**/*.test.ts"],
+    },
+  },
 ]);

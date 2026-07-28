@@ -1,44 +1,44 @@
-import { headers } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
-import Stripe from "stripe";
+import { z } from "zod";
 import { prisma } from "@hair-simo/db";
+import { PaymentService } from "@hair-simo/core";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY ?? "sk_test_placeholder");
+const webhookSchema = z.object({
+  paymentId: z.string().min(1),
+  status: z.enum(["succeeded", "failed", "refunded"]),
+  googlePayToken: z.string().optional(),
+  providerReference: z.string().optional(),
+});
+
+const paymentService = new PaymentService();
 
 export async function POST(request: NextRequest) {
-  const payload = await request.text();
-  const signature = (await headers()).get("stripe-signature");
-  const secret = process.env.STRIPE_WEBHOOK_SECRET;
-
-  if (!signature || !secret) {
-    return NextResponse.json({ error: "MISSING_WEBHOOK_CONFIG" }, { status: 400 });
+  const authHeader = request.headers.get("authorization");
+  const expectedSecret = process.env.GCP_PAYMENT_WEBHOOK_SECRET;
+  if (expectedSecret && authHeader !== `Bearer ${expectedSecret}`) {
+    return NextResponse.json({ error: "UNAUTHORIZED" }, { status: 401 });
   }
 
-  let event: Stripe.Event;
   try {
-    event = stripe.webhooks.constructEvent(payload, signature, secret);
+    const body = webhookSchema.parse(await request.json());
+
+    if (body.status === "succeeded" && body.googlePayToken) {
+      await paymentService.confirmPayment(body.paymentId, body.googlePayToken);
+    } else {
+      await prisma.payment.update({
+        where: { id: body.paymentId },
+        data: {
+          status: body.status === "succeeded" ? "paid" : body.status,
+          providerIntentId: body.providerReference ?? undefined,
+        },
+      });
+    }
+
+    return NextResponse.json({ received: true });
   } catch (error) {
     return NextResponse.json(
-      { error: "WEBHOOK_SIGNATURE_INVALID", message: error instanceof Error ? error.message : "invalid signature" },
+      { error: "WEBHOOK_FAILED", message: error instanceof Error ? error.message : "unknown error" },
       { status: 400 },
     );
   }
-
-  if (event.type === "payment_intent.succeeded") {
-    const intent = event.data.object as Stripe.PaymentIntent;
-    await prisma.payment.updateMany({
-      where: { providerIntentId: intent.id },
-      data: { status: "paid" },
-    });
-  }
-
-  if (event.type === "payment_intent.payment_failed") {
-    const intent = event.data.object as Stripe.PaymentIntent;
-    await prisma.payment.updateMany({
-      where: { providerIntentId: intent.id },
-      data: { status: "failed" },
-    });
-  }
-
-  return NextResponse.json({ received: true });
 }

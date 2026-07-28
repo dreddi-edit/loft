@@ -8,12 +8,17 @@ const loginSchema = z.object({
   password: z.string().min(8),
 });
 
+const firebaseLoginSchema = z.object({
+  idToken: z.string().min(1),
+});
+
 export type AuthSession = {
   userId: string;
   email: string;
   role: RoleKey;
   firstName: string;
   lastName: string;
+  provider?: "local-jwt" | "identity-platform";
 };
 
 function getJwtSecret() {
@@ -30,6 +35,22 @@ export async function verifyPassword(password: string, passwordHash: string) {
   return bcrypt.compare(password, passwordHash);
 }
 
+async function resolveUserSession(userId: string): Promise<AuthSession> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    include: { roles: { include: { role: true } } },
+  });
+  if (!user || !user.active) throw new Error("USER_NOT_FOUND");
+  const role = user.roles[0]?.role.key ?? "staff";
+  return {
+    userId: user.id,
+    email: user.email,
+    role,
+    firstName: user.firstName,
+    lastName: user.lastName,
+  };
+}
+
 export class AuthService {
   async login(rawInput: unknown) {
     const input = loginSchema.parse(rawInput);
@@ -42,13 +63,13 @@ export class AuthService {
     const valid = await verifyPassword(input.password, user.passwordHash);
     if (!valid) throw new Error("INVALID_CREDENTIALS");
 
-    const role = user.roles[0]?.role.key ?? "staff";
     const session: AuthSession = {
       userId: user.id,
       email: user.email,
-      role,
+      role: user.roles[0]?.role.key ?? "staff",
       firstName: user.firstName,
       lastName: user.lastName,
+      provider: "local-jwt",
     };
 
     const token = await new SignJWT(session)
@@ -60,7 +81,50 @@ export class AuthService {
     return { token, session };
   }
 
+  async loginWithFirebase(rawInput: unknown) {
+    const input = firebaseLoginSchema.parse(rawInput);
+    const { verifyIdToken, isIdentityPlatformConfigured } = await import("@hair-simo/gcp");
+
+    if (!isIdentityPlatformConfigured()) {
+      throw new Error("IDENTITY_PLATFORM_NOT_ENABLED");
+    }
+
+    const identity = await verifyIdToken(input.idToken);
+    const user = await prisma.user.findUnique({
+      where: { email: identity.email },
+      include: { roles: { include: { role: true } } },
+    });
+
+    if (!user || !user.active) throw new Error("INVALID_CREDENTIALS");
+
+    const roleFromClaims = (identity.customClaims as { role?: RoleKey }).role;
+    const session: AuthSession = {
+      userId: user.id,
+      email: user.email,
+      role: roleFromClaims ?? user.roles[0]?.role.key ?? "staff",
+      firstName: user.firstName,
+      lastName: user.lastName,
+      provider: "identity-platform",
+    };
+
+    return { idToken: input.idToken, session };
+  }
+
   async verifyToken(token: string): Promise<AuthSession> {
+    if (process.env.GCP_IDENTITY_PLATFORM_ENABLED === "true" && token.split(".").length === 3) {
+      try {
+        const { verifyIdToken } = await import("@hair-simo/gcp");
+        const identity = await verifyIdToken(token);
+        const user = await prisma.user.findUnique({ where: { email: identity.email } });
+        if (user) {
+          const base = await resolveUserSession(user.id);
+          return { ...base, provider: "identity-platform" };
+        }
+      } catch {
+        // Fall through to JWT verification for local dev tokens
+      }
+    }
+
     const { payload } = await jwtVerify(token, getJwtSecret());
     return payload as unknown as AuthSession;
   }
