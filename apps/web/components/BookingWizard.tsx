@@ -47,6 +47,9 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
   const [lastName, setLastName] = useState("Rossi");
   const [phone, setPhone] = useState("+41790000000");
   const [paymentMode, setPaymentMode] = useState<"deposit" | "full">("deposit");
+  const [termsAccepted, setTermsAccepted] = useState(false);
+  const [marketingOptIn, setMarketingOptIn] = useState(false);
+  const [manageUrl, setManageUrl] = useState<string | null>(null);
 
   const step = steps[stepIndex];
   const checkoutStarted = useRef(false);
@@ -127,11 +130,14 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
           locale,
           staffId: staffId || undefined,
           sourceChannel: "web",
+          termsAccepted,
+          marketingOptIn,
         }),
       });
       const json = await response.json();
       if (!response.ok) throw new Error(json.message ?? "BOOKING_CREATE_FAILED");
       setAppointmentId(json.data.id);
+      if (json.data.manageUrl) setManageUrl(json.data.manageUrl);
       setStepIndex(4);
     } catch (err) {
       setError(err instanceof Error ? err.message : t(locale, "error_generic"));
@@ -263,16 +269,36 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
             <Input label="Phone" value={phone} onChange={(event) => setPhone(event.target.value)} />
             <Input label="First name" value={firstName} onChange={(event) => setFirstName(event.target.value)} />
             <Input label="Last name" value={lastName} onChange={(event) => setLastName(event.target.value)} />
+            <label style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start", gridColumn: "1 / -1" }}>
+              <input type="checkbox" checked={termsAccepted} onChange={(event) => setTermsAccepted(event.target.checked)} required />
+              <span>{t(locale, "booking_terms")}</span>
+            </label>
+            <label style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start", gridColumn: "1 / -1" }}>
+              <input type="checkbox" checked={marketingOptIn} onChange={(event) => setMarketingOptIn(event.target.checked)} />
+              <span>{t(locale, "booking_marketing")}</span>
+            </label>
           </div>
         ) : null}
 
         {step === "payment" ? (
           <div className="hs-grid">
             {paymentComplete ? (
-              <p style={{ color: "var(--hs-success)" }}>{t(locale, "payment_paid")}</p>
+              <div>
+                <p style={{ color: "var(--hs-success)" }}>{t(locale, "payment_paid")}</p>
+                {manageUrl ? (
+                  <p>
+                    <a href={manageUrl}>{t(locale, "booking_manage_link")}</a>
+                  </p>
+                ) : null}
+              </div>
             ) : (
               <>
                 <p>{t(locale, "booking_success")}</p>
+                {manageUrl ? (
+                  <p>
+                    <a href={manageUrl}>{t(locale, "booking_manage_link")}</a>
+                  </p>
+                ) : null}
                 <Select label={t(locale, "booking_step_payment")} value={paymentMode} onChange={(event) => setPaymentMode(event.target.value as "deposit" | "full")}>
                   <option value="deposit">Deposit (30%)</option>
                   <option value="full">Full payment</option>
@@ -309,7 +335,7 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
             </Button>
           ) : null}
           {step !== "payment" ? (
-            <Button type="button" onClick={() => void nextStep()} disabled={loading}>
+            <Button type="button" onClick={() => void nextStep()} disabled={loading || (step === "details" && !termsAccepted)}>
               {loading ? t(locale, "loading") : t(locale, "submit")}
             </Button>
           ) : null}

@@ -161,4 +161,32 @@ export class NotificationService {
 
     return { record, delivery };
   }
+
+  async wasReminderSent(appointmentId: string) {
+    const existing = await prisma.notificationLog.findFirst({
+      where: {
+        appointmentId,
+        templateKey: "appointment.reminder.v1",
+        sentAt: { not: null },
+      },
+    });
+    return Boolean(existing);
+  }
+
+  async sendBookingConfirmation(input: {
+    appointmentId: string;
+    recipient: string;
+    locale: AppLocale;
+    timeLabel: string;
+    manageUrl?: string;
+  }) {
+    const message = `Your Hair Simo appointment is booked for ${input.timeLabel}.${input.manageUrl ? ` Manage: ${input.manageUrl}` : ""}`;
+    return this.send({
+      channel: "web",
+      recipient: input.recipient,
+      subject: "Hair Simo Booking Confirmation",
+      message,
+      locale: input.locale,
+    });
+  }
 }

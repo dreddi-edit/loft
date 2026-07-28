@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { salonRepository } from "@hair-simo/core";
 import { Badge, Card, Container, PageHeader } from "@hair-simo/ui";
 import { BookingWizard } from "../../../components/BookingWizard";
+import { ContactForm } from "../../../components/ContactForm";
 import { resolveLocale, t } from "@hair-simo/i18n";
 
 const pageKeys = {
@@ -32,6 +33,15 @@ export default async function LocaleContentPage({
     return (
       <Container>
         <BookingWizard locale={locale} />
+      </Container>
+    );
+  }
+
+  if (page === "contact") {
+    return (
+      <Container>
+        <PageHeader title={t(locale, "contact_title")} subtitle={t(locale, "contact_body")} />
+        <ContactForm locale={locale} />
       </Container>
     );
   }

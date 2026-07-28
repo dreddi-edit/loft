@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { prisma } from "@hair-simo/db";
 import type { Money } from "./index";
+import { BookingService } from "./booking-service";
+
+const bookingService = new BookingService();
 
 const checkoutSchema = z.object({
   appointmentId: z.string().min(1),
@@ -112,6 +115,10 @@ export class PaymentService {
         providerIntentId: googlePayToken.slice(0, 64),
       },
     });
+
+    if (payment.appointmentId) {
+      await bookingService.confirm(payment.appointmentId, "payment confirmed");
+    }
 
     return prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
   }

@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { BookingService, NotificationService } from "@hair-simo/core";
+import {
+  BookingService,
+  NotificationService,
+  createAppointmentAccessToken,
+} from "@hair-simo/core";
 import { checkRateLimit } from "../../../lib/rate-limit";
 
 const bookingService = new BookingService();
@@ -29,19 +33,28 @@ export async function POST(request: NextRequest) {
       locale: String(body.locale ?? "en"),
       sourceChannel: String(body.sourceChannel ?? "web"),
       staffId: body.staffId ? String(body.staffId) : undefined,
+      marketingOptIn: body.marketingOptIn === true || body.marketingOptIn === "true",
+      termsAccepted: body.termsAccepted === true || body.termsAccepted === "true",
     });
 
+    const manageToken = await createAppointmentAccessToken({
+      appointmentId: appointment.id,
+      customerId: appointment.customerId,
+    });
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ?? "http://localhost:3000";
+    const manageUrl = `${baseUrl}/${appointment.locale}/manage/${manageToken}`;
+
     if (appointment.customer.email) {
-      await notificationService.sendAppointmentReminder({
+      await notificationService.sendBookingConfirmation({
         appointmentId: appointment.id,
-        channel: "web",
         recipient: appointment.customer.email,
         locale: (appointment.locale as "de" | "it" | "fr" | "en") ?? "en",
         timeLabel: new Date(appointment.startsAt).toLocaleString(appointment.locale),
+        manageUrl,
       });
     }
 
-    return NextResponse.json({ data: appointment }, { status: 201 });
+    return NextResponse.json({ data: { ...appointment, manageToken, manageUrl } }, { status: 201 });
   } catch (error) {
     return NextResponse.json(
       { error: "BOOKING_CREATE_FAILED", message: error instanceof Error ? error.message : "unknown error" },

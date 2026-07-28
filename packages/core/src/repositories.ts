@@ -1,4 +1,5 @@
-import { prisma, type AppointmentStatus, type Channel } from "@hair-simo/db";
+import { prisma } from "@hair-simo/db";
+import type { AppointmentStatus, Channel } from "@hair-simo/db";
 
 export const salonRepository = {
   listServices: (includeInactive = false) =>
@@ -56,6 +57,13 @@ export const salonRepository = {
       include: { translations: true },
     }),
 
+  upsertServiceTranslation: (serviceId: string, locale: string, name: string, description: string) =>
+    prisma.serviceTranslation.upsert({
+      where: { serviceId_locale: { serviceId, locale } },
+      update: { name, description },
+      create: { serviceId, locale, name, description },
+    }),
+
   listStaff: () =>
     prisma.staffProfile.findMany({
       include: {
@@ -64,6 +72,28 @@ export const salonRepository = {
         availability: true,
       },
       orderBy: { displayName: "asc" },
+    }),
+
+  listStaffAvailability: (staffId: string) =>
+    prisma.staffAvailabilityRule.findMany({ where: { staffId }, orderBy: { dayOfWeek: "asc" } }),
+
+  listStaffTimeOff: (staffId: string, startsAt: Date, endsAt: Date) =>
+    prisma.staffTimeOff.findMany({
+      where: {
+        staffId,
+        startsAt: { lt: endsAt },
+        endsAt: { gt: startsAt },
+      },
+    }),
+
+  updateStaffProfile: (
+    id: string,
+    data: Partial<{ displayName: string; bio: string | null; phone: string | null; isBookable: boolean }>,
+  ) =>
+    prisma.staffProfile.update({
+      where: { id },
+      data,
+      include: { staffServices: true, availability: true },
     }),
 
   listCustomers: () =>
@@ -99,6 +129,14 @@ export const salonRepository = {
       marketingOptIn: boolean;
     }>,
   ) => prisma.customer.update({ where: { id }, data }),
+
+  addCustomerNote: (customerId: string, note: string) =>
+    prisma.customerNote.create({ data: { customerId, note } }),
+
+  recordConsent: (customerId: string, type: string, granted: boolean, source: string) =>
+    prisma.consentRecord.create({
+      data: { customerId, type, granted, source },
+    }),
 
   listBusinessHours: () => prisma.businessHours.findMany({ orderBy: { dayOfWeek: "asc" } }),
 
@@ -142,7 +180,7 @@ export const salonRepository = {
   findAppointmentById: (id: string) =>
     prisma.appointment.findUnique({
       where: { id },
-      include: { customer: true, service: true, staff: true, payments: true, statusHistory: true },
+      include: { customer: true, service: { include: { translations: true } }, staff: true, payments: true, statusHistory: true },
     }),
 
   createAppointment: (input: {
@@ -201,6 +239,68 @@ export const salonRepository = {
       orderBy: { startsAt: "asc" },
     }),
 
+  listAppointmentsBetween: (from: Date, to: Date, statuses: AppointmentStatus[]) =>
+    prisma.appointment.findMany({
+      where: {
+        startsAt: { gte: from, lte: to },
+        status: { in: statuses },
+      },
+      include: { customer: true, service: true, staff: true },
+      orderBy: { startsAt: "asc" },
+    }),
+
+  listCallLogs: (limit = 50) =>
+    prisma.callLog.findMany({
+      include: { customer: true },
+      orderBy: { createdAt: "desc" },
+      take: limit,
+    }),
+
+  listNotificationLogs: (limit = 50) =>
+    prisma.notificationLog.findMany({
+      include: { appointment: true },
+      orderBy: { createdAt: "desc" },
+      take: limit,
+    }),
+
+  listProducts: () => prisma.product.findMany({ orderBy: { name: "asc" } }),
+
+  listInventory: () => prisma.inventoryItem.findMany({ orderBy: { name: "asc" } }),
+
+  upsertConversationMessage: async (input: {
+    channel: Channel;
+    locale: string;
+    customerId?: string;
+    role: string;
+    content: string;
+    externalRef?: string;
+  }) => {
+    let conversation = input.externalRef
+      ? await prisma.conversation.findFirst({ where: { externalRef: input.externalRef } })
+      : null;
+
+    if (!conversation) {
+      conversation = await prisma.conversation.create({
+        data: {
+          channel: input.channel,
+          locale: input.locale,
+          customerId: input.customerId,
+          externalRef: input.externalRef,
+        },
+      });
+    }
+
+    await prisma.message.create({
+      data: {
+        conversationId: conversation.id,
+        role: input.role,
+        content: input.content,
+      },
+    });
+
+    return conversation;
+  },
+
   getDashboardStats: async () => {
     const [appointments, customers, services, payments] = await Promise.all([
       prisma.appointment.count({ where: { status: { not: "cancelled" } } }),
@@ -220,6 +320,24 @@ export const salonRepository = {
       services,
       revenueCents: payments._sum.amountCents ?? 0,
       noShowRate,
+    };
+  },
+
+  getReportStats: async () => {
+    const [paid, pending, cancelled, upcoming] = await Promise.all([
+      prisma.payment.aggregate({ _sum: { amountCents: true }, where: { status: "paid" } }),
+      prisma.appointment.count({ where: { status: "pending" } }),
+      prisma.appointment.count({ where: { status: "cancelled" } }),
+      prisma.appointment.count({
+        where: { startsAt: { gte: new Date() }, status: { in: ["pending", "confirmed"] } },
+      }),
+    ]);
+
+    return {
+      revenueCents: paid._sum.amountCents ?? 0,
+      pendingAppointments: pending,
+      cancelledAppointments: cancelled,
+      upcomingAppointments: upcoming,
     };
   },
 };

@@ -29,13 +29,19 @@ export async function enqueueTask(payload: TaskPayload, scheduleSeconds = 0): Pr
   }
 
   const parent = getClient().queuePath(config.projectId, config.region, config.cloudTasksQueue);
+  const taskSecret = process.env.GCP_CLOUD_TASKS_SECRET;
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (taskSecret) {
+    headers.Authorization = `Bearer ${taskSecret}`;
+  }
+
   const [task] = await getClient().createTask({
     parent,
     task: {
       httpRequest: {
         httpMethod: "POST",
         url: handlerUrl,
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: Buffer.from(JSON.stringify(payload)).toString("base64"),
       },
       scheduleTime: scheduleSeconds

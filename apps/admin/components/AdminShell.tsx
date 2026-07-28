@@ -13,6 +13,9 @@ const links = [
   ["staff", "Staff"],
   ["rules", "Rules"],
   ["reports", "Reports"],
+  ["call-logs", "Calls"],
+  ["notifications", "Notifications"],
+  ["products", "Products"],
 ] as const;
 
 export default async function AdminShell({ children }: { children: ReactNode }) {

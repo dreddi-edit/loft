@@ -1,6 +1,10 @@
 import { notFound } from "next/navigation";
 import { salonRepository } from "@hair-simo/core";
 import { Badge, Card, PageHeader } from "@hair-simo/ui";
+import { AppointmentActions } from "../../components/AppointmentActions";
+import { BusinessHoursEditor } from "../../components/BusinessHoursEditor";
+import { CustomerEditor } from "../../components/CustomerEditor";
+import { ServiceEditor } from "../../components/ServiceEditor";
 
 const sections = {
   dashboard: "Dashboard",
@@ -11,6 +15,9 @@ const sections = {
   staff: "Staff",
   rules: "Business hours & rules",
   reports: "Reports",
+  "call-logs": "Call logs",
+  notifications: "Notifications",
+  products: "Products",
 } as const;
 
 export default async function AdminSectionPage({
@@ -37,11 +44,11 @@ export default async function AdminSectionPage({
     );
   }
 
-  if (section === "appointments") {
+  if (section === "appointments" || section === "calendar") {
     const appointments = await salonRepository.listAppointments();
     return (
       <div>
-        <PageHeader title="Appointments" subtitle="Manage, reschedule and cancel bookings" />
+        <PageHeader title={sections[section]} subtitle="Manage, reschedule and cancel bookings" />
         <div className="hs-grid">
           {appointments.map((appointment) => (
             <Card key={appointment.id}>
@@ -50,10 +57,12 @@ export default async function AdminSectionPage({
                   <strong>{appointment.customer.firstName} {appointment.customer.lastName}</strong>
                   <p style={{ color: "var(--hs-muted)" }}>
                     {new Date(appointment.startsAt).toLocaleString()} · {appointment.service.slug}
+                    {appointment.staff ? ` · ${appointment.staff.displayName}` : ""}
                   </p>
                 </div>
                 <Badge>{appointment.status}</Badge>
               </div>
+              <AppointmentActions appointment={appointment} />
             </Card>
           ))}
         </div>
@@ -65,16 +74,8 @@ export default async function AdminSectionPage({
     const customers = await salonRepository.listCustomers();
     return (
       <div>
-        <PageHeader title="Customers" subtitle="CRM overview" />
-        <div className="hs-grid hs-grid-2">
-          {customers.map((customer) => (
-            <Card key={customer.id}>
-              <strong>{customer.firstName} {customer.lastName}</strong>
-              <p style={{ color: "var(--hs-muted)" }}>{customer.email}</p>
-              <Badge>{customer.locale.toUpperCase()}</Badge>
-            </Card>
-          ))}
-        </div>
+        <PageHeader title="Customers" subtitle="CRM overview and notes" />
+        <CustomerEditor customers={customers} />
       </div>
     );
   }
@@ -84,17 +85,7 @@ export default async function AdminSectionPage({
     return (
       <div>
         <PageHeader title="Services" subtitle="Catalog and pricing" />
-        <div className="hs-grid hs-grid-2">
-          {services.map((service) => (
-            <Card key={service.id}>
-              <strong>{service.slug}</strong>
-              <p style={{ color: "var(--hs-muted)" }}>
-                {(service.priceCents / 100).toFixed(2)} EUR · {service.durationMin} min
-              </p>
-              <Badge>{service.isActive ? "active" : "inactive"}</Badge>
-            </Card>
-          ))}
-        </div>
+        <ServiceEditor services={services} />
       </div>
     );
   }
@@ -109,6 +100,9 @@ export default async function AdminSectionPage({
             <Card key={member.id}>
               <strong>{member.displayName}</strong>
               <p style={{ color: "var(--hs-muted)" }}>{member.user.email}</p>
+              <p style={{ color: "var(--hs-muted)" }}>
+                Services: {member.staffServices.map((link) => link.service.slug).join(", ")}
+              </p>
               <Badge>{member.isBookable ? "bookable" : "hidden"}</Badge>
             </Card>
           ))}
@@ -122,26 +116,22 @@ export default async function AdminSectionPage({
     return (
       <div>
         <PageHeader title="Business hours" subtitle="Opening times and booking rules" />
-        <div className="hs-grid">
-          {hours.map((entry) => (
-            <Card key={entry.id}>
-              Day {entry.dayOfWeek}: {entry.isOpen ? `${entry.startMin}–${entry.endMin} min` : "closed"}
-            </Card>
-          ))}
-        </div>
+        <BusinessHoursEditor hours={hours} />
       </div>
     );
   }
 
-  if (section === "calendar") {
-    const appointments = await salonRepository.listAppointments();
+  if (section === "call-logs") {
+    const logs = await salonRepository.listCallLogs();
     return (
       <div>
-        <PageHeader title="Calendar" subtitle="Upcoming appointments" />
+        <PageHeader title="Call logs" subtitle="Voice interactions and fallbacks" />
         <div className="hs-grid">
-          {appointments.slice(0, 20).map((appointment) => (
-            <Card key={appointment.id}>
-              {new Date(appointment.startsAt).toLocaleString()} — {appointment.service.slug}
+          {logs.map((log) => (
+            <Card key={log.id}>
+              <strong>{log.actionTaken}</strong>
+              <p style={{ color: "var(--hs-muted)" }}>{log.summary}</p>
+              <Badge>{log.fallback ? "fallback" : "ok"}</Badge>
             </Card>
           ))}
         </div>
@@ -149,12 +139,51 @@ export default async function AdminSectionPage({
     );
   }
 
+  if (section === "notifications") {
+    const logs = await salonRepository.listNotificationLogs();
+    return (
+      <div>
+        <PageHeader title="Notifications" subtitle="Delivery audit trail" />
+        <div className="hs-grid">
+          {logs.map((log) => (
+            <Card key={log.id}>
+              <strong>{log.templateKey}</strong>
+              <p style={{ color: "var(--hs-muted)" }}>{log.recipient} · {log.channel}</p>
+              <Badge>{log.sentAt ? "sent" : "pending"}</Badge>
+            </Card>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (section === "products") {
+    const products = await salonRepository.listProducts();
+    return (
+      <div>
+        <PageHeader title="Products" subtitle="Retail catalog" />
+        <div className="hs-grid hs-grid-2">
+          {products.map((product) => (
+            <Card key={product.id}>
+              <strong>{product.name}</strong>
+              <p style={{ color: "var(--hs-muted)" }}>{(product.priceCents / 100).toFixed(2)} EUR · stock {product.stock}</p>
+            </Card>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  const reports = await salonRepository.getReportStats();
   return (
     <div>
-      <PageHeader title={sections[section]} subtitle="Reporting and analytics" />
-      <Card>
-        <p>Revenue, utilization and no-show analytics are available via dashboard KPIs.</p>
-      </Card>
+      <PageHeader title="Reports" subtitle="Revenue and utilization" />
+      <div className="hs-grid hs-grid-2">
+        <Card><strong>Revenue</strong><p>{(reports.revenueCents / 100).toFixed(2)} EUR</p></Card>
+        <Card><strong>Upcoming</strong><p>{reports.upcomingAppointments}</p></Card>
+        <Card><strong>Pending</strong><p>{reports.pendingAppointments}</p></Card>
+        <Card><strong>Cancelled</strong><p>{reports.cancelledAppointments}</p></Card>
+      </div>
     </div>
   );
 }

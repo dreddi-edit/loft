@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { BookingService } from "@hair-simo/core";
+import { BookingService, salonRepository } from "@hair-simo/core";
 import { requireSession } from "../../../../../lib/auth";
 
 const bookingService = new BookingService();
@@ -19,6 +19,18 @@ export async function POST(
     }
     if (action === "cancel") {
       const data = await bookingService.cancel(id, String(body.reason ?? "cancelled by staff"));
+      return NextResponse.json({ data });
+    }
+    if (action === "confirm") {
+      const data = await bookingService.confirm(id, "confirmed by staff");
+      return NextResponse.json({ data });
+    }
+    if (action === "no_show") {
+      const data = await salonRepository.updateAppointmentStatus(id, "no_show", "marked no-show");
+      return NextResponse.json({ data });
+    }
+    if (action === "complete") {
+      const data = await salonRepository.updateAppointmentStatus(id, "completed", "marked completed");
       return NextResponse.json({ data });
     }
 

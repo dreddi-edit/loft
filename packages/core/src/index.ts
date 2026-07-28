@@ -128,4 +128,6 @@ export { NotificationService } from "./notification-service";
 export { PaymentService } from "./payment-service";
 export { PricingService } from "./pricing-service";
 export { RefundService } from "./refund-service";
+export { ReminderService } from "./reminder-service";
+export { createAppointmentAccessToken, verifyAppointmentAccessToken } from "./appointment-token";
 export { salonRepository } from "./repositories";
