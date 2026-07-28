@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "baseUrl": ".",
+    "paths": {
+      "@hair-simo/ui": ["packages/ui/src/index.ts"],
+      "@hair-simo/core": ["packages/core/src/index.ts"],
+      "@hair-simo/db": ["packages/db/src/index.ts"],
+      "@hair-simo/ai": ["packages/ai/src/index.ts"],
+      "@hair-simo/i18n": ["packages/i18n/src/index.ts"]
+    }
+  }
+}
