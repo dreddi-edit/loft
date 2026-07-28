@@ -12,6 +12,8 @@
   },
   "dependencies": {
     "@hair-simo/core": "workspace:*",
+    "@hair-simo/db": "workspace:*",
+    "@hair-simo/i18n": "workspace:*",
     "@hair-simo/ui": "workspace:*",
     "next": "latest",
     "react": "latest",

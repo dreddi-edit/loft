@@ -9,7 +9,10 @@
     "lint": "turbo run lint",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "db:generate": "pnpm --filter @hair-simo/db db:generate",
+    "db:migrate": "pnpm --filter @hair-simo/db db:migrate",
+    "db:seed": "pnpm --filter @hair-simo/db db:seed"
   },
   "devDependencies": {
     "@types/node": "^22.18.1",

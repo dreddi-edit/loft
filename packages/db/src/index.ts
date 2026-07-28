@@ -1,7 +1,12 @@
-export type DatabaseModuleStatus = {
-  connected: boolean;
-};
-
-export function getDatabaseModuleStatus(): DatabaseModuleStatus {
-  return { connected: false };
-}
+export { prisma } from "./client";
+export type {
+  Appointment,
+  AppointmentStatus,
+  BusinessHours,
+  CallLog,
+  Channel,
+  Customer,
+  Payment,
+  Service,
+  StaffProfile,
+} from "@prisma/client";

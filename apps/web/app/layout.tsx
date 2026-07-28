@@ -4,6 +4,11 @@ import type { ReactNode } from "react";
 export const metadata: Metadata = {
   title: "Hair Simo",
   description: "Hair Simo salon platform",
+  openGraph: {
+    title: "Hair Simo",
+    description: "Multilingual salon website, booking and AI assistant.",
+    type: "website",
+  },
 };
 
 type RootLayoutProps = {

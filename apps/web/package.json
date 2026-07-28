@@ -11,11 +11,15 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@hair-simo/ai": "workspace:*",
+    "@hair-simo/core": "workspace:*",
+    "@hair-simo/db": "workspace:*",
     "@hair-simo/i18n": "workspace:*",
     "@hair-simo/ui": "workspace:*",
     "next": "latest",
     "react": "latest",
     "react-dom": "latest",
+    "stripe": "^18.4.0",
     "zod": "latest"
   }
 }
