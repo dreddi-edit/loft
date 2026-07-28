@@ -43,6 +43,11 @@ Request (JSON):
 }
 ```
 
+## Config
+
+### `GET /api/config/public`
+Returns runtime flags for the frontend (`gcpEnabled`, `paymentsMockEnabled`, `googlePayConfigured`, `environment`).
+
 ## Payments (Google Pay)
 
 ### `POST /api/payments/checkout`
@@ -67,6 +72,13 @@ Response:
     "provider": "google-pay"
   }
 }
+```
+
+### `POST /api/payments/confirm-mock`
+Dev-only mock payment confirmation. Enabled when `PAYMENTS_MOCK_ENABLED=true` or `NODE_ENV !== production`.
+
+```json
+{ "paymentId": "..." }
 ```
 
 ### `POST /api/payments/webhook`
@@ -109,6 +121,13 @@ JSON webhook for WhatsApp Business integration via Pub/Sub worker.
 JSON webhook for SMS integration via Pub/Sub worker.
 
 ## Voice (Dialogflow CX + Chirp)
+
+### `POST /api/voice/simulate`
+Local voice simulator (text in → AI response out, optional Chirp audio with GCP).
+
+```json
+{ "text": "I want to book a haircut", "locale": "en" }
+```
 
 ### `POST /api/voice/dialogflow`
 Dialogflow CX webhook fulfillment endpoint. Processes utterances, runs Gemini tooling, synthesizes Chirp 3 HD audio.

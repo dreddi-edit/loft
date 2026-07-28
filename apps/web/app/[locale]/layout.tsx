@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { resolveLocale } from "@hair-simo/i18n";
+import { ChatWidget } from "../../components/ChatWidget";
 import { SiteFooter } from "../../components/SiteFooter";
 import { SiteHeader } from "../../components/SiteHeader";
 
@@ -15,6 +16,7 @@ export default async function LocaleLayout({ children, params }: LocaleLayoutPro
       <SiteHeader locale={locale} />
       <main style={{ minHeight: "60vh" }}>{children}</main>
       <SiteFooter locale={locale} />
+      <ChatWidget locale={locale} />
     </>
   );
 }

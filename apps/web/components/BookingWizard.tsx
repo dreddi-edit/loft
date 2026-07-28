@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { AppLocale } from "@hair-simo/i18n";
 import { t } from "@hair-simo/i18n";
 import { Badge, Button, Card, Input, PageHeader, Select } from "@hair-simo/ui";
@@ -14,8 +14,14 @@ type Service = {
 };
 
 type Staff = { id: string; displayName: string };
-
 type Slot = { startsAt: string; endsAt: string };
+
+type PublicConfig = {
+  gcpEnabled: boolean;
+  paymentsMockEnabled: boolean;
+  googlePayConfigured: boolean;
+  environment: string;
+};
 
 const steps = ["service", "stylist", "datetime", "details", "payment"] as const;
 
@@ -28,7 +34,9 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
   const [error, setError] = useState<string | null>(null);
   const [appointmentId, setAppointmentId] = useState<string | null>(null);
   const [paymentId, setPaymentId] = useState<string | null>(null);
-  const [googlePayReady, setGooglePayReady] = useState(false);
+  const [amountCents, setAmountCents] = useState<number | null>(null);
+  const [paymentComplete, setPaymentComplete] = useState(false);
+  const [config, setConfig] = useState<PublicConfig | null>(null);
 
   const [serviceSlug, setServiceSlug] = useState("haircut-women");
   const [staffId, setStaffId] = useState("");
@@ -41,10 +49,28 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
   const [paymentMode, setPaymentMode] = useState<"deposit" | "full">("deposit");
 
   const step = steps[stepIndex];
+  const checkoutStarted = useRef(false);
   const selectedService = useMemo(
     () => services.find((entry) => entry.slug === serviceSlug),
     [services, serviceSlug],
   );
+
+  useEffect(() => {
+    void fetch("/api/config/public")
+      .then((res) => res.json())
+      .then((json) => setConfig(json.data ?? null))
+      .catch(() => setConfig(null));
+  }, []);
+
+  useEffect(() => {
+    if (step !== "payment") {
+      checkoutStarted.current = false;
+      return;
+    }
+    if (!appointmentId || paymentComplete || paymentId || checkoutStarted.current) return;
+    checkoutStarted.current = true;
+    void createGooglePayCheckout();
+  }, [step, appointmentId, paymentComplete, paymentId, paymentMode]);
 
   async function ensureCatalogLoaded() {
     if (services.length > 0) return;
@@ -132,7 +158,27 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
       const json = await response.json();
       if (!response.ok) throw new Error(json.message ?? "PAYMENT_CHECKOUT_FAILED");
       setPaymentId(json.data.paymentId);
-      setGooglePayReady(Boolean(json.data.googlePayRequest));
+      setAmountCents(json.data.amountCents);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t(locale, "error_generic"));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function confirmMockPayment() {
+    if (!paymentId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/payments/confirm-mock", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paymentId }),
+      });
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.message ?? "MOCK_PAYMENT_FAILED");
+      setPaymentComplete(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : t(locale, "error_generic"));
     } finally {
@@ -158,12 +204,11 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
     }
     if (step === "details") {
       await createBooking();
-      return;
-    }
-    if (step === "payment") {
-      await createGooglePayCheckout();
     }
   }
+
+  const showMockPayment = config?.paymentsMockEnabled && paymentId && !paymentComplete;
+  const showGooglePayHint = config?.googlePayConfigured && paymentId && !paymentComplete;
 
   return (
     <div>
@@ -223,35 +268,51 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
 
         {step === "payment" ? (
           <div className="hs-grid">
-            <p>{t(locale, "booking_success")}</p>
-            <Select label={t(locale, "booking_step_payment")} value={paymentMode} onChange={(event) => setPaymentMode(event.target.value as "deposit" | "full")}>
-              <option value="deposit">Deposit (30%)</option>
-              <option value="full">Full payment</option>
-            </Select>
-            {selectedService ? (
-              <p style={{ color: "var(--hs-muted)" }}>
-                Total: {(selectedService.priceCents / 100).toFixed(2)} EUR
-              </p>
-            ) : null}
-            {googlePayReady && paymentId ? (
-              <p style={{ color: "var(--hs-success)" }}>
-                Google Pay checkout ready. Payment ID: {paymentId.slice(0, 12)}…
-              </p>
-            ) : null}
+            {paymentComplete ? (
+              <p style={{ color: "var(--hs-success)" }}>{t(locale, "payment_paid")}</p>
+            ) : (
+              <>
+                <p>{t(locale, "booking_success")}</p>
+                <Select label={t(locale, "booking_step_payment")} value={paymentMode} onChange={(event) => setPaymentMode(event.target.value as "deposit" | "full")}>
+                  <option value="deposit">Deposit (30%)</option>
+                  <option value="full">Full payment</option>
+                </Select>
+                {amountCents !== null ? (
+                  <p style={{ color: "var(--hs-muted)" }}>
+                    {t(locale, "payment_amount")}: {(amountCents / 100).toFixed(2)} EUR
+                  </p>
+                ) : selectedService ? (
+                  <p style={{ color: "var(--hs-muted)" }}>
+                    {t(locale, "payment_amount")}: {(selectedService.priceCents / 100).toFixed(2)} EUR
+                  </p>
+                ) : null}
+                {showMockPayment ? (
+                  <Button type="button" onClick={() => void confirmMockPayment()} disabled={loading}>
+                    {t(locale, "payment_mock")}
+                  </Button>
+                ) : null}
+                {showGooglePayHint ? (
+                  <p style={{ color: "var(--hs-muted)" }}>{t(locale, "payment_google_pay")} — SDK ready after merchant setup</p>
+                ) : null}
+                {!paymentId && loading ? <p style={{ color: "var(--hs-muted)" }}>{t(locale, "payment_checkout")}…</p> : null}
+              </>
+            )}
           </div>
         ) : null}
 
         {error ? <p style={{ color: "var(--hs-danger)" }}>{error}</p> : null}
 
         <div style={{ display: "flex", gap: "0.75rem", marginTop: "1rem" }}>
-          {stepIndex > 0 ? (
+          {stepIndex > 0 && step !== "payment" ? (
             <Button type="button" variant="secondary" onClick={() => setStepIndex((value) => Math.max(0, value - 1))}>
               {t(locale, "cancel")}
             </Button>
           ) : null}
-          <Button type="button" onClick={() => void nextStep()} disabled={loading}>
-            {loading ? t(locale, "loading") : step === "payment" ? t(locale, "booking_confirm") : t(locale, "submit")}
-          </Button>
+          {step !== "payment" ? (
+            <Button type="button" onClick={() => void nextStep()} disabled={loading}>
+              {loading ? t(locale, "loading") : t(locale, "submit")}
+            </Button>
+          ) : null}
         </div>
       </Card>
     </div>

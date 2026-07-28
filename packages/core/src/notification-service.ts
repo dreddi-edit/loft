@@ -33,7 +33,7 @@ async function sendViaPubSub(payload: SendPayload) {
 }
 
 async function sendViaGmail(payload: SendPayload) {
-  const senderEmail = process.env.GCP_GMAIL_SENDER;
+  const senderEmail = process.env.GCP_GMAIL_SENDER?.trim();
   if (!senderEmail) {
     console.info("[notification:email:local]", {
       to: payload.recipient,
@@ -44,6 +44,16 @@ async function sendViaGmail(payload: SendPayload) {
   }
 
   try {
+    const { isGcpConfigured } = await import("@hair-simo/gcp");
+    if (!isGcpConfigured()) {
+      console.info("[notification:email:local-gcp-missing]", {
+        to: payload.recipient,
+        subject: payload.subject ?? "Hair Simo",
+        message: payload.message,
+      });
+      return { delivered: true, provider: "gmail-log" };
+    }
+
     const { google } = await import("googleapis");
     const auth = new google.auth.GoogleAuth({
       scopes: ["https://www.googleapis.com/auth/gmail.send"],

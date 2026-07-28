@@ -37,21 +37,24 @@ Production-ready multilingual salon operating system on **100% Google Cloud Plat
 - Docker (local PostgreSQL via `docker compose`)
 - GCP project (for production features)
 
-## Quick start (local)
+## Quick start (local — no GCP required)
 
 ```bash
 cp .env.example .env
-# set JWT_SECRET and DATABASE_URL
+# Set JWT_SECRET only. Leave GCP_PROJECT_ID empty.
 
 pnpm install
 pnpm db:setup
 pnpm dev
 ```
 
-- Web: http://localhost:3000
+- Web: http://localhost:3000/de (chat widget on every page)
+- Booking: http://localhost:3000/de/booking (includes mock payment)
 - Admin: http://localhost:3001/login
 
-Without `GCP_PROJECT_ID`, the platform runs in local fallback mode (regex AI, JWT auth, console notifications).
+Without `GCP_PROJECT_ID`, everything runs in local mode: regex AI, JWT auth, mock payments, console notifications.
+
+**Go-live:** See `docs/GO-LIVE.md` — only keys and GCP wiring needed, no code changes.
 
 ### Demo admin credentials (seed)
 
@@ -89,4 +92,5 @@ docker build -f apps/admin/Dockerfile -t hair-simo-admin .
 - `docs/api.md` — API reference
 - `docs/operations.md` — runbook
 - `docs/decisions.md` — technical decisions
+- `docs/GO-LIVE.md` — **production checklist (keys + connect only)**
 - `infra/terraform/README.md` — infrastructure guide

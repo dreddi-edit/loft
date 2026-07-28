@@ -109,7 +109,7 @@ export async function runAssistant(payload: z.infer<typeof aiRequestSchema>, too
   try {
     const { isGcpConfigured, runGeminiAssistant, synthesizeGeminiResponse } = await import("@hair-simo/gcp");
     if (!isGcpConfigured()) {
-      return runIntentTooling(payload, tools);
+      return { ...(await runIntentTooling(payload, tools)), provider: "regex-fallback" as const };
     }
 
     const systemPrompt = chatbotSystemPrompts[locale] ?? chatbotSystemPrompts.en;
