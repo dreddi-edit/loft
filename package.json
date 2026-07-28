@@ -14,7 +14,8 @@
     "db:migrate": "pnpm --filter @hair-simo/db db:migrate",
     "db:push": "pnpm --filter @hair-simo/db db:push",
     "db:seed": "pnpm --filter @hair-simo/db db:seed",
-    "db:setup": "docker compose up -d postgres && pnpm db:push && pnpm db:seed"
+    "db:setup": "docker compose up -d postgres && pnpm db:push && pnpm db:seed",
+    "bootstrap": "bash scripts/bootstrap-from-github.sh"
   },
   "devDependencies": {
     "@types/node": "^22.18.1",

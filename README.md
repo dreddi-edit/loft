@@ -39,7 +39,13 @@ Production-ready multilingual salon operating system on **100% Google Cloud Plat
 
 ## Quick start (local — no GCP required)
 
+**Terminal-Agent / Laptop:** See `docs/TERMINAL-AGENT-GUIDE.md` for clone-from-GitHub + gcloud step-by-step.
+
 ```bash
+# One-shot: clone/pull from GitHub + install + db setup
+bash scripts/bootstrap-from-github.sh
+
+# Or manual:
 cp .env.example .env
 # Set JWT_SECRET only. Leave GCP_PROJECT_ID empty.
 
@@ -93,4 +99,5 @@ docker build -f apps/admin/Dockerfile -t hair-simo-admin .
 - `docs/operations.md` — runbook
 - `docs/decisions.md` — technical decisions
 - `docs/GO-LIVE.md` — **production checklist (keys + connect only)**
+- `docs/TERMINAL-AGENT-GUIDE.md` — **laptop + Cursor CLI + gcloud (ultra detailed)**
 - `infra/terraform/README.md` — infrastructure guide

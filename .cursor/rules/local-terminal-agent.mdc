@@ -1,0 +1,43 @@
+---
+description: Rules for local Cursor CLI / terminal agent on the developer laptop
+alwaysApply: true
+---
+
+# Hair Simo — Local terminal agent
+
+You are working on the **developer's laptop**, not in Cursor Cloud Agent.
+
+## First actions in a new session
+
+1. If the repo is missing, run:
+   `bash scripts/bootstrap-from-github.sh`
+2. If the repo exists, run:
+   `git fetch origin && git checkout cursor/delete-all-repo-content-e10a && git pull --ff-only`
+3. Read `docs/TERMINAL-AGENT-GUIDE.md` for the current phase and checklist.
+4. Never assume Cloud Agent state — verify with `git status`, `git log -1`, and local commands.
+
+## GitHub source of truth
+
+- Repository: `https://github.com/dreddi-edit/loft`
+- Working branch: `cursor/delete-all-repo-content-e10a`
+- Open PR: `#1` (Hair Simo Salon Platform MVP)
+- Base branch: `master` (do not push directly unless user asks)
+
+## gcloud / GCP
+
+- Use the **local** `gcloud` CLI (`gcloud auth list`, `gcloud config get-value project`).
+- Do not expect credentials from Cloud Agent VMs.
+- Follow `docs/TERMINAL-AGENT-GUIDE.md` phases for API enablement, Terraform, and deploy.
+- Ask the user to confirm `project_id` and billing before `terraform apply`.
+
+## Safety
+
+- Run `pnpm lint && pnpm typecheck && pnpm test && pnpm build` before suggesting merges.
+- Do not commit secrets (`.env`, keys, terraform.tfvars with real passwords).
+- Prefer small, focused commits with clear messages.
+
+## Local dev defaults
+
+- `GCP_PROJECT_ID` empty = local mode (mock payments, regex AI fallback, JWT admin login).
+- Web: http://localhost:3000/de
+- Admin: http://localhost:3001/login (`owner@hairsimo.local` / `HairSimo2026!`)
