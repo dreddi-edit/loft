@@ -122,6 +122,9 @@ export class BookingEngine {
   }
 }
 
+export { AuthService, assertRole as assertAuthRole, hashPassword, type AuthSession } from "./auth-service";
 export { BookingService } from "./booking-service";
+export { NotificationService } from "./notification-service";
 export { PricingService } from "./pricing-service";
+export { RefundService } from "./refund-service";
 export { salonRepository } from "./repositories";

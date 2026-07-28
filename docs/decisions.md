@@ -17,6 +17,6 @@
 - **Booking conflict policy:** Staff-overlap conflicts are rejected (`SLOT_NOT_AVAILABLE`) during booking creation.
 - **Payment strategy:** Stripe PaymentIntent API with explicit `deposit` vs `full` mode handling.
 - **Chat/voice orchestration:** Intent routing via deterministic parser in `packages/ai` with shared tool contract.
-- **Admin auth default (temporary):** Header-based role checks (`x-role`) for MVP velocity; documented as TODO to replace by proper auth provider.
+- **Admin auth:** JWT cookie sessions (`admin_token`) with bcrypt password hashes and role checks.
 - **Public endpoint safety baseline:** Added lightweight in-memory rate-limit guard for write-heavy public channels.
 - **Voice fallback default:** If confidence is low (very short utterance), store callback-required `CallLog` entry and return handover message.

@@ -7,6 +7,9 @@ const bookingRequestSchema = z.object({
   serviceSlug: z.string().min(1),
   startsAt: z.string().datetime(),
   customerEmail: z.string().email(),
+  customerFirstName: z.string().min(1).optional(),
+  customerLastName: z.string().min(1).optional(),
+  customerPhone: z.string().optional(),
   locale: z.enum(["de", "it", "fr", "en"]).default("en"),
   sourceChannel: z.enum(["web", "whatsapp", "sms", "voice"]).default("web"),
   staffId: z.string().optional(),
@@ -45,6 +48,11 @@ export class BookingService {
       input.customerEmail,
       input.locale,
       input.sourceChannel,
+      {
+        firstName: input.customerFirstName,
+        lastName: input.customerLastName,
+        phone: input.customerPhone,
+      },
     );
 
     return salonRepository.createAppointment({
@@ -59,8 +67,20 @@ export class BookingService {
   }
 
   async reschedule(appointmentId: string, startsAtIso: string) {
+    const appointment = await salonRepository.findAppointmentById(appointmentId);
+    if (!appointment) throw new Error("APPOINTMENT_NOT_FOUND");
     const startsAt = new Date(startsAtIso);
-    return salonRepository.rescheduleAppointment(appointmentId, startsAt, addMinutes(startsAt, 60));
+    const durationMin = appointment.service.durationMin;
+    const endsAt = addMinutes(startsAt, durationMin);
+    const conflict = await salonRepository.listBlockedAppointments(
+      appointment.staffId ?? undefined,
+      startsAt,
+      endsAt,
+    );
+    if (conflict.some((item) => item.id !== appointmentId)) {
+      throw new Error("SLOT_NOT_AVAILABLE");
+    }
+    return salonRepository.rescheduleAppointment(appointmentId, startsAt, endsAt);
   }
 
   async cancel(appointmentId: string, reason: string) {

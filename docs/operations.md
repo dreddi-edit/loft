@@ -68,8 +68,4 @@ Behavior:
 
 ## 7) Admin access in MVP
 
-MVP uses header role checks on admin APIs:
-- `x-role: owner | manager | staff`
-
-Production hardening next step:
-- replace with full auth provider + session verification + RBAC middleware.
+MVP uses JWT session cookies and role checks on admin APIs.

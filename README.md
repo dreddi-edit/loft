@@ -1,93 +1,76 @@
 # Hair Simo Platform
 
-Production-ready MVP foundation for a multilingual salon operating system with booking, payments, AI chat, voice intake, and admin operations.
+Production-ready multilingual salon operating system with booking, payments, AI chat/voice, and admin backoffice.
 
 ## Monorepo structure
 
-- `apps/web`: Public website, multilingual pages, booking flows, payment + AI/voice webhooks
-- `apps/admin`: Backoffice UI and role-protected admin APIs
-- `packages/core`: Business layer (`API -> service -> repository`)
-- `packages/db`: Prisma schema, client access, migrations, seed
-- `packages/ai`: Intent detection, tool wiring, multilingual prompt/templates
-- `packages/i18n`: Locale helpers and dictionaries (`de`, `it`, `fr`, `en`)
-- `packages/ui`: Shared UI base package
-- `docs`: Architecture, API, operations, decisions
+- `apps/web` — public website, booking wizard, payment + AI/voice webhooks
+- `apps/admin` — authenticated backoffice with dashboard and CRUD APIs
+- `packages/core` — business services (`BookingService`, `PricingService`, `AuthService`, `NotificationService`, `RefundService`)
+- `packages/db` — Prisma schema, migrations, seed
+- `packages/ai` — intent detection + tool orchestration
+- `packages/i18n` — locale dictionaries + templates (de/it/fr/en)
+- `packages/ui` — shared design system components
+- `docs` — architecture, API, operations, decisions
 
 ## Requirements
 
 - Node.js 22+
 - pnpm 10+
-- PostgreSQL 15+ (local or managed)
-- Stripe account (test mode for MVP)
-- Twilio account (WhatsApp/SMS/Voice webhooks)
+- Docker (for local PostgreSQL via `docker compose`)
 
 ## Quick start
 
-1. Install dependencies:
-
-```bash
-pnpm install
-```
-
-2. Copy and fill environment variables:
-
 ```bash
 cp .env.example .env
-```
+# set JWT_SECRET and DATABASE_URL
 
-3. Generate Prisma client, migrate DB, seed demo data:
-
-```bash
-pnpm db:generate
-pnpm db:migrate
-pnpm db:seed
-```
-
-4. Start all apps:
-
-```bash
+pnpm install
+pnpm db:setup   # starts postgres, pushes schema, seeds demo data
 pnpm dev
 ```
 
-- Web: `http://localhost:3000`
-- Admin: `http://localhost:3001`
+- Web: http://localhost:3000
+- Admin: http://localhost:3001/login
 
-## Main scripts
+### Demo admin credentials (seed)
+
+- `owner@hairsimo.local` / `HairSimo2026!`
+- `manager@hairsimo.local` / `HairSimo2026!`
+- `staff@hairsimo.local` / `HairSimo2026!`
+
+## Scripts
 
 ```bash
 pnpm lint
 pnpm typecheck
 pnpm test
 pnpm build
-pnpm format
+pnpm db:generate
+pnpm db:push
+pnpm db:seed
 ```
 
-## Functional MVP coverage
+## MVP feature coverage
 
-- Website routing with locale prefixes: `/de`, `/it`, `/fr`, `/en`
-- Required pages and booking entry points
-- Availability + booking create/reschedule/cancel APIs
-- Stripe PaymentIntent endpoint + webhook status sync
-- Admin APIs with role checks (`x-role` header in MVP)
-- AI chat endpoints for web/WhatsApp/SMS intents
-- Twilio voice webhook with language detection and fallback call logging
-- Notification reminder logging structure (anti-no-show preparation)
+- 4-language website (`/de`, `/it`, `/fr`, `/en`) with SEO sitemap/robots/hreflang
+- Multi-step booking wizard (service → stylist → slot → customer → payment intent)
+- Availability engine with buffers and conflict checks
+- Stripe checkout + webhook + refund endpoint
+- JWT admin auth with role-based API access (`owner`, `manager`, `staff`)
+- Admin dashboard, appointments, customers, services, staff, business hours
+- AI chat endpoints (web/WhatsApp/SMS) with booking intents
+- Twilio voice webhook with call logs + fallback handover
+- Notification reminder pipeline (email log + Twilio SMS/WhatsApp adapters)
+- GDPR-oriented consent records and audit status history
 
-## Google Cloud deployment baseline
+## Google Cloud (later)
 
-- Run `apps/web` and `apps/admin` as separate Cloud Run services
-- Use Cloud SQL (PostgreSQL) for `DATABASE_URL`
-- Use Secret Manager for Stripe/Twilio/auth secrets
-- Set `NEXT_PUBLIC_BASE_URL` per deployed domain
-- Configure ingress webhooks:
-  - `/api/payments/webhook`
-  - `/api/chat/whatsapp`
-  - `/api/chat/sms`
-  - `/api/voice/twilio`
+Deploy `apps/web` and `apps/admin` to Cloud Run, PostgreSQL to Cloud SQL, secrets via Secret Manager. See `docs/architecture.md`.
 
-## Known MVP TODOs
+## Documentation
 
-- Replace header-based admin auth with full auth provider (Clerk/Auth0/Descope)
-- Add real outbound SMS/WhatsApp/email dispatch implementation
-- Add Stripe refund workflow endpoint over `Refund` model
-- Extend automated tests for route handlers and webhook contracts
+- `docs/architecture.md`
+- `docs/api.md`
+- `docs/operations.md`
+- `docs/decisions.md`

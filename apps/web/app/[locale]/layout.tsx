@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
-import { resolveLocale, t, type AppLocale } from "@hair-simo/i18n";
+import { resolveLocale } from "@hair-simo/i18n";
+import { SiteFooter } from "../../components/SiteFooter";
+import { SiteHeader } from "../../components/SiteHeader";
 
 type LocaleLayoutProps = {
   children: ReactNode;
@@ -9,19 +11,11 @@ type LocaleLayoutProps = {
 export default async function LocaleLayout({ children, params }: LocaleLayoutProps) {
   const locale = resolveLocale((await params).locale);
   return (
-    <div>
-      <header>
-        <h1>{t(locale, "site_title")}</h1>
-        <nav>
-          <a href={`/${locale}`}>Home</a> | <a href={`/${locale}/services`}>Leistungen</a> |{" "}
-          <a href={`/${locale}/prices`}>Preise</a> | <a href={`/${locale}/booking`}>{t(locale, "book_now")}</a>
-        </nav>
-      </header>
-      {children}
-      <footer>
-        <small>{t(locale, "opening_hours")}: Mon-Fri 09:00-20:00</small>
-      </footer>
-    </div>
+    <>
+      <SiteHeader locale={locale} />
+      <main style={{ minHeight: "60vh" }}>{children}</main>
+      <SiteFooter locale={locale} />
+    </>
   );
 }
 
@@ -29,9 +23,10 @@ export function generateStaticParams() {
   return ["de", "it", "fr", "en"].map((locale) => ({ locale }));
 }
 
-export function generateMetadata({ params }: { params: { locale: AppLocale } }) {
+export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }) {
+  const locale = resolveLocale((await params).locale);
   return {
-    title: `Hair Simo - ${params.locale.toUpperCase()}`,
+    title: `Hair Simo - ${locale.toUpperCase()}`,
     alternates: {
       languages: {
         de: "/de",

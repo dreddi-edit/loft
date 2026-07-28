@@ -1,8 +1,9 @@
 import { PrismaClient, type RoleKey } from "@prisma/client";
+import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
-
 const locales = ["de", "it", "fr", "en"] as const;
+const DEMO_PASSWORD = "HairSimo2026!";
 
 async function seedRoles() {
   const roleKeys: RoleKey[] = ["owner", "manager", "staff"];
@@ -41,6 +42,18 @@ async function seedServices() {
         en: { name: "Root touch-up", description: "Hair root coloring service." },
       },
     },
+    {
+      slug: "mens-cut",
+      category: "cut",
+      durationMin: 45,
+      priceCents: 4500,
+      translations: {
+        de: { name: "Herrenhaarschnitt", description: "Präziser Schnitt und Styling." },
+        it: { name: "Taglio uomo", description: "Taglio preciso e styling." },
+        fr: { name: "Coupe homme", description: "Coupe précise et coiffage." },
+        en: { name: "Men's haircut", description: "Precise cut and styling." },
+      },
+    },
   ];
 
   for (const service of baseServices) {
@@ -60,11 +73,11 @@ async function seedServices() {
     });
 
     for (const locale of locales) {
-      const t = service.translations[locale];
+      const translation = service.translations[locale];
       await prisma.serviceTranslation.upsert({
         where: { serviceId_locale: { serviceId: created.id, locale } },
-        update: { name: t.name, description: t.description },
-        create: { serviceId: created.id, locale, name: t.name, description: t.description },
+        update: { name: translation.name, description: translation.description },
+        create: { serviceId: created.id, locale, name: translation.name, description: translation.description },
       });
     }
   }
@@ -73,39 +86,52 @@ async function seedServices() {
 async function seedBusinessHours() {
   await prisma.businessHours.deleteMany();
   const ranges = [
-    { dayOfWeek: 1, startMin: 9 * 60, endMin: 18 * 60, isOpen: true },
-    { dayOfWeek: 2, startMin: 9 * 60, endMin: 18 * 60, isOpen: true },
-    { dayOfWeek: 3, startMin: 9 * 60, endMin: 18 * 60, isOpen: true },
-    { dayOfWeek: 4, startMin: 9 * 60, endMin: 20 * 60, isOpen: true },
-    { dayOfWeek: 5, startMin: 9 * 60, endMin: 20 * 60, isOpen: true },
-    { dayOfWeek: 6, startMin: 8 * 60, endMin: 16 * 60, isOpen: true },
-    { dayOfWeek: 0, startMin: 0, endMin: 0, isOpen: false },
+    { id: "day-1", dayOfWeek: 1, startMin: 9 * 60, endMin: 18 * 60, isOpen: true },
+    { id: "day-2", dayOfWeek: 2, startMin: 9 * 60, endMin: 18 * 60, isOpen: true },
+    { id: "day-3", dayOfWeek: 3, startMin: 9 * 60, endMin: 18 * 60, isOpen: true },
+    { id: "day-4", dayOfWeek: 4, startMin: 9 * 60, endMin: 20 * 60, isOpen: true },
+    { id: "day-5", dayOfWeek: 5, startMin: 9 * 60, endMin: 20 * 60, isOpen: true },
+    { id: "day-6", dayOfWeek: 6, startMin: 8 * 60, endMin: 16 * 60, isOpen: true },
+    { id: "day-0", dayOfWeek: 0, startMin: 0, endMin: 0, isOpen: false },
   ];
   await prisma.businessHours.createMany({ data: ranges });
 }
 
-async function seedStaffAndCustomer() {
+async function seedStaffAndCustomer(passwordHash: string) {
   const ownerRole = await prisma.role.findUniqueOrThrow({ where: { key: "owner" } });
+  const managerRole = await prisma.role.findUniqueOrThrow({ where: { key: "manager" } });
   const staffRole = await prisma.role.findUniqueOrThrow({ where: { key: "staff" } });
 
   const owner = await prisma.user.upsert({
     where: { email: "owner@hairsimo.local" },
-    update: {},
+    update: { passwordHash },
     create: {
       email: "owner@hairsimo.local",
-      passwordHash: "dev-only-change-me",
+      passwordHash,
       firstName: "Simo",
       lastName: "Owner",
       locale: "de",
     },
   });
 
+  const manager = await prisma.user.upsert({
+    where: { email: "manager@hairsimo.local" },
+    update: { passwordHash },
+    create: {
+      email: "manager@hairsimo.local",
+      passwordHash,
+      firstName: "Marco",
+      lastName: "Manager",
+      locale: "it",
+    },
+  });
+
   const staff = await prisma.user.upsert({
     where: { email: "staff@hairsimo.local" },
-    update: {},
+    update: { passwordHash },
     create: {
       email: "staff@hairsimo.local",
-      passwordHash: "dev-only-change-me",
+      passwordHash,
       firstName: "Giulia",
       lastName: "Stylist",
       locale: "it",
@@ -122,6 +148,7 @@ async function seedStaffAndCustomer() {
     where: { userId: staff.id },
     update: { displayName: "Giulia" },
     create: { userId: staff.id, displayName: "Giulia", locale: "it" },
+    include: { user: true },
   });
 
   const services = await prisma.service.findMany();
@@ -133,23 +160,9 @@ async function seedStaffAndCustomer() {
     });
   }
 
-  await prisma.userRole.upsert({
-    where: { userId_roleId: { userId: owner.id, roleId: ownerRole.id } },
-    update: {},
-    create: { userId: owner.id, roleId: ownerRole.id },
-  });
-
-  await prisma.userRole.upsert({
-    where: { userId_roleId: { userId: staff.id, roleId: staffRole.id } },
-    update: {},
-    create: { userId: staff.id, roleId: staffRole.id },
-  });
-
   for (const dayOfWeek of [1, 2, 3, 4, 5]) {
     await prisma.staffAvailabilityRule.upsert({
-      where: {
-        id: `${staffProfile.id}-${dayOfWeek}`,
-      },
+      where: { id: `${staffProfile.id}-${dayOfWeek}` },
       update: {},
       create: {
         id: `${staffProfile.id}-${dayOfWeek}`,
@@ -161,7 +174,23 @@ async function seedStaffAndCustomer() {
     });
   }
 
-  await prisma.customer.upsert({
+  await prisma.userRole.upsert({
+    where: { userId_roleId: { userId: owner.id, roleId: ownerRole.id } },
+    update: {},
+    create: { userId: owner.id, roleId: ownerRole.id },
+  });
+  await prisma.userRole.upsert({
+    where: { userId_roleId: { userId: manager.id, roleId: managerRole.id } },
+    update: {},
+    create: { userId: manager.id, roleId: managerRole.id },
+  });
+  await prisma.userRole.upsert({
+    where: { userId_roleId: { userId: staff.id, roleId: staffRole.id } },
+    update: {},
+    create: { userId: staff.id, roleId: staffRole.id },
+  });
+
+  const customer = await prisma.customer.upsert({
     where: { email: "maria@example.com" },
     update: {},
     create: {
@@ -172,6 +201,18 @@ async function seedStaffAndCustomer() {
       locale: "it",
       sourceChannel: "web",
       marketingOptIn: true,
+    },
+  });
+
+  await prisma.consentRecord.upsert({
+    where: { id: "consent-maria-marketing" },
+    update: { granted: true },
+    create: {
+      id: "consent-maria-marketing",
+      customerId: customer.id,
+      type: "marketing",
+      granted: true,
+      source: "web-booking",
     },
   });
 }
@@ -190,11 +231,13 @@ async function seedInventory() {
 }
 
 async function main() {
+  const passwordHash = await bcrypt.hash(DEMO_PASSWORD, 12);
   await seedRoles();
   await seedServices();
   await seedBusinessHours();
-  await seedStaffAndCustomer();
+  await seedStaffAndCustomer(passwordHash);
   await seedInventory();
+  console.info(`Seed complete. Demo password for all users: ${DEMO_PASSWORD}`);
 }
 
 main()

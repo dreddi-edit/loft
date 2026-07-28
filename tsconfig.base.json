@@ -14,7 +14,7 @@
     "forceConsistentCasingInFileNames": true,
     "baseUrl": ".",
     "paths": {
-      "@hair-simo/ui": ["packages/ui/src/index.ts"],
+      "@hair-simo/ui": ["packages/ui/src/index.tsx"],
       "@hair-simo/core": ["packages/core/src/index.ts"],
       "@hair-simo/db": ["packages/db/src/index.ts"],
       "@hair-simo/ai": ["packages/ai/src/index.ts"],

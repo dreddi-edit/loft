@@ -1,17 +1,26 @@
+import { cookies } from "next/headers";
 import { NextRequest } from "next/server";
+import { AuthService, assertAuthRole, type AuthSession } from "@hair-simo/core";
+import type { RoleKey } from "@hair-simo/db";
 
-const ALLOWED_ROLES = ["owner", "manager", "staff"] as const;
-type AllowedRole = (typeof ALLOWED_ROLES)[number];
+const authService = new AuthService();
 
-export function getRoleFromRequest(request: NextRequest): AllowedRole | null {
-  const value = request.headers.get("x-role");
-  if (value && (ALLOWED_ROLES as readonly string[]).includes(value)) return value as AllowedRole;
-  return null;
+export async function getSession(): Promise<AuthSession | null> {
+  const token = (await cookies()).get("admin_token")?.value;
+  if (!token) return null;
+  try {
+    return await authService.verifyToken(token);
+  } catch {
+    return null;
+  }
 }
 
-export function assertRole(request: NextRequest, allowed: AllowedRole[]) {
-  const role = getRoleFromRequest(request);
-  if (!role) throw new Error("UNAUTHENTICATED");
-  if (!allowed.includes(role)) throw new Error("FORBIDDEN");
-  return role;
+export async function requireSession(request: NextRequest, allowed: RoleKey[]) {
+  const headerToken = request.headers.get("authorization")?.replace("Bearer ", "");
+  const cookieToken = request.cookies.get("admin_token")?.value;
+  const token = headerToken || cookieToken;
+  if (!token) throw new Error("UNAUTHENTICATED");
+  const session = await authService.verifyToken(token);
+  assertAuthRole(session, allowed);
+  return session;
 }

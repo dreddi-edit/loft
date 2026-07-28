@@ -13,7 +13,14 @@
   },
   "dependencies": {
     "@hair-simo/db": "workspace:*",
+    "@hair-simo/i18n": "workspace:*",
+    "bcryptjs": "^3.0.2",
     "date-fns": "^4.1.0",
+    "jose": "^6.1.0",
+    "stripe": "^18.4.0",
     "zod": "^4.1.5"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6"
   }
 }

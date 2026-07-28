@@ -11,14 +11,18 @@
     "typecheck": "tsc --project tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests",
     "db:generate": "prisma generate",
-    "db:migrate": "prisma migrate dev --name init",
+    "db:migrate": "pnpm db:generate && prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "db:push": "prisma db push",
     "db:seed": "tsx src/seed.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.14.0",
+    "bcryptjs": "^3.0.2",
     "zod": "^4.1.5"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
     "prisma": "^6.14.0",
     "tsx": "^4.20.5"
   }

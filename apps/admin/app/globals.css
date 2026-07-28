@@ -1,0 +1,43 @@
+@import "@hair-simo/ui/src/styles.css";
+
+* {
+  box-sizing: border-box;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.admin-shell {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  min-height: 100vh;
+}
+
+.admin-sidebar {
+  border-right: 1px solid var(--hs-border);
+  background: #121216;
+  padding: 1rem;
+}
+
+.admin-sidebar a {
+  display: block;
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  margin-bottom: 0.25rem;
+}
+
+.admin-sidebar a:hover {
+  background: #1f1f24;
+}
+
+.admin-main {
+  padding: 1.5rem;
+}
+
+@media (max-width: 900px) {
+  .admin-shell {
+    grid-template-columns: 1fr;
+  }
+}

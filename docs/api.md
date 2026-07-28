@@ -81,15 +81,28 @@ Twilio-compatible webhook endpoint for SMS.
 ### `POST /api/voice/twilio`
 Twilio voice webhook endpoint (language detection, intent handling, call log persistence, fallback support).
 
-## Admin APIs (role-protected in MVP by `x-role` header)
+## Admin APIs (JWT protected)
 
-Header:
-`x-role: owner | manager | staff`
+Authenticate via `POST /api/auth/login` (sets `admin_token` cookie).
 
+- `GET /api/dashboard`
 - `GET /api/services`
+- `POST /api/services`
+- `PATCH /api/services/{id}`
 - `GET /api/staff`
 - `GET /api/customers`
+- `POST /api/customers`
+- `PATCH /api/customers/{id}`
 - `GET /api/appointments`
+- `POST /api/appointments`
+- `POST /api/appointments/{id}/reschedule`
+- `POST /api/appointments/{id}/cancel`
+- `GET /api/business-hours`
+- `PUT /api/business-hours`
+
+## Refunds
+
+### `POST /api/payments/refund`
 
 Error format:
 ```json

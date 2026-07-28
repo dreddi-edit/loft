@@ -1,0 +1,9 @@
+@import "@hair-simo/ui/src/styles.css";
+
+* {
+  box-sizing: border-box;
+}
+
+a {
+  color: inherit;
+}

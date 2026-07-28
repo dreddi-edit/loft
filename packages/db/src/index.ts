@@ -7,6 +7,7 @@ export type {
   Channel,
   Customer,
   Payment,
+  RoleKey,
   Service,
   StaffProfile,
 } from "@prisma/client";
