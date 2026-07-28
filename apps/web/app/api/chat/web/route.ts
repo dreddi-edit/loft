@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { aiRequestSchema, runIntentTooling } from "@hair-simo/ai";
-import { aiTools } from "../../../../../lib/ai-tools";
-import { checkRateLimit } from "../../../../../lib/rate-limit";
+import { aiTools } from "../../../../lib/ai-tools";
+import { checkRateLimit } from "../../../../lib/rate-limit";
 
 export async function POST(request: NextRequest) {
   const client = request.headers.get("x-forwarded-for") ?? "unknown";

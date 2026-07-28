@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@hair-simo/db": "workspace:*",
     "date-fns": "^4.1.0",
     "zod": "^4.1.5"
   }

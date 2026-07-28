@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@hair-simo/db";
 import { detectIntent, detectLocaleFromInput, runIntentTooling } from "@hair-simo/ai";
-import { aiTools } from "../../../../../lib/ai-tools";
-import { checkRateLimit } from "../../../../../lib/rate-limit";
+import { aiTools } from "../../../../lib/ai-tools";
+import { checkRateLimit } from "../../../../lib/rate-limit";
 
 function toTwiml(message: string) {
   return `<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="alice">${message}</Say></Response>`;

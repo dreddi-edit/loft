@@ -101,6 +101,7 @@ model Customer {
   appointments    Appointment[]
   consents        ConsentRecord[]
   conversations   Conversation[]
+  callLogs        CallLog[]
 }
 
 model CustomerNote {

@@ -49,7 +49,7 @@ export function buildAvailabilitySlots(input: AvailabilityInput): Slot[] {
   let cursor = new Date(input.dayStart);
   const durationWithBuffer = input.serviceDurationMin + input.bufferAfterMin;
 
-  while (true) {
+  while (cursor < input.dayEnd) {
     const appointmentEnd = addMinutes(cursor, input.serviceDurationMin);
     const blockedEnd = addMinutes(cursor, durationWithBuffer);
     if (blockedEnd > input.dayEnd) break;
