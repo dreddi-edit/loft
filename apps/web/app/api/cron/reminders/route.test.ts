@@ -15,10 +15,42 @@ import { resetSharedSecretWarnings } from "../../../../lib/shared-secret";
 const dispatchDueReminders = vi.fn();
 
 vi.mock("@hair-simo/core", () => ({
+  resolveTenantContext: async () => ({
+    tenantId: "cltenant00000000000000001",
+    slug: "hairsimo-brixen",
+    displayName: "Hair Simo",
+    timeZone: "Europe/Rome",
+    defaultLocale: "it",
+  }),
   ReminderService: class {
     dispatchDueReminders = dispatchDueReminders;
   },
 }));
+
+vi.mock("@hair-simo/db", () => ({
+
+  DEFAULT_TENANT_ID: "cltenant00000000000000001",
+  DEFAULT_TENANT_SLUG: "hairsimo-brixen",
+  currentTenantId: () => "cltenant00000000000000001",
+  tenantEmailKey: (email: string) => ({ tenantId_email: { tenantId: "cltenant00000000000000001", email } }),
+  tenantPhoneKey: (phone: string) => ({ tenantId_phone: { tenantId: "cltenant00000000000000001", phone } }),
+  tenantSlugKey: (slug: string) => ({ tenantId_slug: { tenantId: "cltenant00000000000000001", slug } }),
+  tenantSkuKey: (sku: string) => ({ tenantId_sku: { tenantId: "cltenant00000000000000001", sku } }),
+  tenantCodeKey: (code: string) => ({ tenantId_code: { tenantId: "cltenant00000000000000001", code } }),
+  tenantDayOfWeekKey: (dayOfWeek: number) => ({ tenantId_dayOfWeek: { tenantId: "cltenant00000000000000001", dayOfWeek } }),
+  getTenantContext: () => undefined,
+  forEachActiveTenant: async (work: (ctx: { tenantId: string; slug: string }) => Promise<void>) => {
+    await work({ tenantId: "cltenant00000000000000001", slug: "hairsimo-brixen" });
+    return { tenantCount: 1 };
+  },
+
+  forEachActiveTenant: async (work: (ctx: { tenantId: string; slug: string }) => Promise<void>) => {
+    await work({ tenantId: "cltenant00000000000000001", slug: "hairsimo-brixen" });
+    return { tenantCount: 1 };
+  },
+  runWithTenantAsync: async (_ctx: unknown, fn: () => unknown) => fn(),
+}));
+
 
 const SECRET = "1f0a9c8b7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e";
 const CLOUD_RUN_CHAIN = "203.0.113.7, 35.191.10.1";

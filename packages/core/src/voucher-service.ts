@@ -12,7 +12,7 @@
  */
 
 import { randomInt } from "node:crypto";
-import { prisma } from "@hair-simo/db";
+import { prisma, tenantCodeKey } from "@hair-simo/db";
 import type { Voucher } from "@hair-simo/db";
 import { z } from "zod";
 import { withSerializationRetry } from "./repositories";
@@ -495,7 +495,7 @@ export class VoucherService {
 
     return withSerializationRetry(() =>
       prisma.$transaction(async (tx) => {
-        const voucher = await tx.voucher.findUnique({ where: { code } });
+        const voucher = await tx.voucher.findUnique({ where: tenantCodeKey(code) });
         if (!voucher) throw new Error("VOUCHER_NOT_FOUND");
 
         const existing = await tx.voucherRedemption.findFirst({
@@ -575,7 +575,7 @@ export class VoucherService {
   async balance(rawCode: string, now = new Date()): Promise<VoucherBalance> {
     const code = parseVoucherCode(rawCode);
     const voucher = await prisma.voucher.findUnique({
-      where: { code },
+      where: tenantCodeKey(code),
       select: {
         code: true,
         initialCents: true,
@@ -601,7 +601,7 @@ export class VoucherService {
   async getVoucher(rawCode: string, now = new Date()): Promise<VoucherDetail> {
     const code = parseVoucherCode(rawCode);
     const voucher = await prisma.voucher.findUnique({
-      where: { code },
+      where: tenantCodeKey(code),
       include: { redemptions: { orderBy: { createdAt: "asc" } } },
     });
     if (!voucher) throw new Error("VOUCHER_NOT_FOUND");
@@ -627,7 +627,7 @@ export class VoucherService {
    */
   async deactivate(rawCode: string, reason?: string, now = new Date()): Promise<VoucherSummary> {
     const code = parseVoucherCode(rawCode);
-    const voucher = await prisma.voucher.findUnique({ where: { code } });
+    const voucher = await prisma.voucher.findUnique({ where: tenantCodeKey(code) });
     if (!voucher) throw new Error("VOUCHER_NOT_FOUND");
     const trimmed = reason?.trim();
     const stamped = trimmed ? `${salonDayKey(now)} deactivated: ${trimmed}` : null;
@@ -643,7 +643,7 @@ export class VoucherService {
 
   async reactivate(rawCode: string, now = new Date()): Promise<VoucherSummary> {
     const code = parseVoucherCode(rawCode);
-    const voucher = await prisma.voucher.findUnique({ where: { code } });
+    const voucher = await prisma.voucher.findUnique({ where: tenantCodeKey(code) });
     if (!voucher) throw new Error("VOUCHER_NOT_FOUND");
     const updated = await prisma.voucher.update({
       where: { id: voucher.id },

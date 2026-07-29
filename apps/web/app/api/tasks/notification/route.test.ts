@@ -9,11 +9,18 @@ import {
 } from "../../../../lib/rate-limit";
 import { resetSharedSecretWarnings } from "../../../../lib/shared-secret";
 
-const send = vi.fn();
+const deliverPubSubEvent = vi.fn();
 
 vi.mock("@hair-simo/core", () => ({
+  resolveTenantContext: async () => ({
+    tenantId: "cltenant00000000000000001",
+    slug: "hairsimo-brixen",
+    displayName: "Hair Simo",
+    timeZone: "Europe/Rome",
+    defaultLocale: "it",
+  }),
   NotificationService: class {
-    send = send;
+    deliverPubSubEvent = deliverPubSubEvent;
   },
 }));
 
@@ -52,8 +59,8 @@ beforeEach(() => {
   setApiLogSink(() => {});
   resetRateLimitStore();
   resetSharedSecretWarnings();
-  send.mockReset();
-  send.mockResolvedValue({ status: "sent" });
+  deliverPubSubEvent.mockReset();
+  deliverPubSubEvent.mockResolvedValue({ status: "sent" });
   vi.spyOn(console, "warn").mockImplementation(() => {});
   vi.stubEnv("GCP_CLOUD_TASKS_SECRET", SECRET);
 });
@@ -73,7 +80,7 @@ describe("POST /api/tasks/notification shared secret", () => {
       error: "UNAUTHORIZED",
       message: safeMessageForCode("UNAUTHORIZED"),
     });
-    expect(send).not.toHaveBeenCalled();
+    expect(deliverPubSubEvent).not.toHaveBeenCalled();
   });
 
   it("rejects a wrong secret so the queue cannot be driven by a stranger", async () => {
@@ -84,14 +91,22 @@ describe("POST /api/tasks/notification shared secret", () => {
       jsonRequest(VALID_TASK, { authorization: `Bearer ${SECRET.slice(0, -1)}0` }),
     );
     expect(nearMiss.status).toBe(401);
-    expect(send).not.toHaveBeenCalled();
+    expect(deliverPubSubEvent).not.toHaveBeenCalled();
   });
 
   it("accepts the configured secret and sends the notification", async () => {
     const response = await POST(authorised());
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true, handled: true, status: "sent" });
-    expect(send).toHaveBeenCalledExactlyOnceWith(VALID_TASK.data);
+    expect(deliverPubSubEvent).toHaveBeenCalledExactlyOnceWith({
+      channel: "sms",
+      recipient: VALID_TASK.data.recipient,
+      locale: VALID_TASK.data.locale,
+      payload: {
+        subject: "Hair Simo",
+        message: VALID_TASK.data.message,
+      },
+    });
   });
 
   it("is fail-closed: constructing the route in production without a secret throws", async () => {
@@ -110,7 +125,7 @@ describe("POST /api/tasks/notification payload handling", () => {
     const response = await POST(authorised({ type: "appointment.delete", data: {} }));
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true, handled: false });
-    expect(send).not.toHaveBeenCalled();
+    expect(deliverPubSubEvent).not.toHaveBeenCalled();
   });
 
   it("returns 400 with field-level detail for a malformed envelope", async () => {
@@ -119,7 +134,7 @@ describe("POST /api/tasks/notification payload handling", () => {
     const body = await response.json();
     expect(body.error).toBe("VALIDATION_ERROR");
     expect(body.details[0].path).toBe("type");
-    expect(send).not.toHaveBeenCalled();
+    expect(deliverPubSubEvent).not.toHaveBeenCalled();
   });
 
   it("rejects an inner payload that names an unsupported channel or an unbounded message", async () => {
@@ -136,7 +151,7 @@ describe("POST /api/tasks/notification payload handling", () => {
       }),
     );
     expect(longMessage.status).toBe(400);
-    expect(send).not.toHaveBeenCalled();
+    expect(deliverPubSubEvent).not.toHaveBeenCalled();
   });
 
   it("returns 413 for an oversized task before the secret check or the send", async () => {
@@ -145,7 +160,7 @@ describe("POST /api/tasks/notification payload handling", () => {
     );
     expect(response.status).toBe(413);
     expect((await response.json()).error).toBe("PAYLOAD_TOO_LARGE");
-    expect(send).not.toHaveBeenCalled();
+    expect(deliverPubSubEvent).not.toHaveBeenCalled();
   });
 
   it("rejects a read method with 405", async () => {
@@ -166,7 +181,7 @@ describe("POST /api/tasks/notification payload handling", () => {
   });
 
   it("never leaks the delivery failure to the client", async () => {
-    send.mockRejectedValue(
+    deliverPubSubEvent.mockRejectedValue(
       new Error("Twilio 20003 authentication failed for account AC0123456789abcdef"),
     );
 

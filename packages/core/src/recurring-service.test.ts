@@ -135,7 +135,8 @@ const { db } = vi.hoisted(() => {
     if (!include) return out;
     if (include.service) out.service = { ...(serviceOf(row.serviceId) ?? {}) };
     if (include.customer) out.customer = { ...(customerOf(row.customerId) ?? {}) };
-    if (include.staff) out.staff = row.staffId === null ? null : { ...(staffOf(row.staffId) ?? {}) };
+    if (include.staff)
+      out.staff = row.staffId === null ? null : { ...(staffOf(row.staffId) ?? {}) };
     if (include.appointments) {
       out.appointments = sortAndTake(
         appointments.filter((entry) => entry.seriesId === row.id),
@@ -261,9 +262,7 @@ const { db } = vi.hoisted(() => {
       ).map((row) => ({ ...row })),
     ),
     findFirst: vi.fn(async (args: Row = {}) => {
-      const found = staffServices.find((row) =>
-        matchRow(row, args.where as Row, staffRelation),
-      );
+      const found = staffServices.find((row) => matchRow(row, args.where as Row, staffRelation));
       return found ? { ...found } : null;
     }),
   };
@@ -369,6 +368,22 @@ const { db } = vi.hoisted(() => {
 });
 
 vi.mock("@hair-simo/db", () => ({
+
+  DEFAULT_TENANT_ID: "cltenant00000000000000001",
+  DEFAULT_TENANT_SLUG: "hairsimo-brixen",
+  currentTenantId: () => "cltenant00000000000000001",
+  tenantEmailKey: (email: string) => ({ tenantId_email: { tenantId: "cltenant00000000000000001", email } }),
+  tenantPhoneKey: (phone: string) => ({ tenantId_phone: { tenantId: "cltenant00000000000000001", phone } }),
+  tenantSlugKey: (slug: string) => ({ tenantId_slug: { tenantId: "cltenant00000000000000001", slug } }),
+  tenantSkuKey: (sku: string) => ({ tenantId_sku: { tenantId: "cltenant00000000000000001", sku } }),
+  tenantCodeKey: (code: string) => ({ tenantId_code: { tenantId: "cltenant00000000000000001", code } }),
+  tenantDayOfWeekKey: (dayOfWeek: number) => ({ tenantId_dayOfWeek: { tenantId: "cltenant00000000000000001", dayOfWeek } }),
+  getTenantContext: () => undefined,
+  forEachActiveTenant: async (work: (ctx: { tenantId: string; slug: string }) => Promise<void>) => {
+    await work({ tenantId: "cltenant00000000000000001", slug: "hairsimo-brixen" });
+    return { tenantCount: 1 };
+  },
+
   prisma: {
     appointment: db.appointment,
     recurringSeries: db.recurringSeries,
@@ -447,11 +462,21 @@ function withHostTimeZone<T>(timeZone: string, run: () => T): T {
 }
 
 function seedSalon(
-  options: { staffIds?: string[]; openMin?: number; closeMin?: number } = {},
+  options: {
+    staffIds?: string[];
+    openMin?: number;
+    closeMin?: number;
+    businessOpenMin?: number;
+    businessCloseMin?: number;
+    closedDays?: number[];
+  } = {},
 ): void {
   const staffIds = options.staffIds ?? [STAFF_A];
   const openMin = options.openMin ?? OPEN_MIN;
   const closeMin = options.closeMin ?? CLOSE_MIN;
+  const businessOpenMin = options.businessOpenMin ?? openMin;
+  const businessCloseMin = options.businessCloseMin ?? closeMin;
+  const closedDays = options.closedDays ?? [];
 
   db.services.push({
     id: SERVICE_ID,
@@ -479,9 +504,9 @@ function seedSalon(
     db.businessHours.rows.push({
       id: `hours-${dayOfWeek}`,
       dayOfWeek,
-      startMin: openMin,
-      endMin: closeMin,
-      isOpen: true,
+      startMin: businessOpenMin,
+      endMin: businessCloseMin,
+      isOpen: !closedDays.includes(dayOfWeek),
     });
   }
 }
@@ -541,9 +566,7 @@ function service(): RecurringService {
   return new RecurringService();
 }
 
-const pristineCreate = db.appointment.create.getMockImplementation() as (
-  args: Row,
-) => Promise<Row>;
+const pristineCreate = db.appointment.create.getMockImplementation() as (args: Row) => Promise<Row>;
 
 /** A connection that drops on the nth booking of the run, which is what a cron meets. */
 function breakCreateOnCall(nth: number, message: string): void {
@@ -681,7 +704,11 @@ describe("previewOccurrences", () => {
   it("stops at the end date without emitting anything past it", () => {
     const endsAt = endOfSalonDay(at("2026-04-07", TEN_AM));
     const occurrences = previewOccurrences(FIRST_AT, 6, 10, endsAt);
-    expect(occurrences.map((entry) => salonDayKey(entry))).toEqual(["2026-01-13", "2026-02-24", "2026-04-07"]);
+    expect(occurrences.map((entry) => salonDayKey(entry))).toEqual([
+      "2026-01-13",
+      "2026-02-24",
+      "2026-04-07",
+    ]);
   });
 
   it("treats a null end date as open ended and honours the count", () => {
@@ -770,9 +797,9 @@ describe("materialiseDue", () => {
 
   it("rejects a horizon that is not in the future", async () => {
     await expect(service().materialiseDue(NOW, NOW)).rejects.toThrow("INVALID_HORIZON");
-    await expect(
-      service().materialiseDue(NOW, new Date(NOW.getTime() - 1)),
-    ).rejects.toThrow("INVALID_HORIZON");
+    await expect(service().materialiseDue(NOW, new Date(NOW.getTime() - 1))).rejects.toThrow(
+      "INVALID_HORIZON",
+    );
   });
 
   it("defaults the horizon to the materialisation window", async () => {
@@ -826,8 +853,9 @@ describe("idempotency", () => {
 
     expect(bookedFirstRun).toBeGreaterThan(1);
     expect(db.appointments).toHaveLength(bookedFirstRun);
-    expect(new Set(db.appointments.map((row) => (row.startsAt as Date).getTime()).values()).size)
-      .toBe(bookedFirstRun);
+    expect(
+      new Set(db.appointments.map((row) => (row.startsAt as Date).getTime()).values()).size,
+    ).toBe(bookedFirstRun);
   });
 
   it("refuses to book twice when someone resets the cursor by hand", async () => {
@@ -899,6 +927,31 @@ describe("never double-books a staff member", () => {
       reason: "NO_SLOT_WITHIN_TOLERANCE",
     });
     expect(db.appointments).toHaveLength(0);
+  });
+
+  it("declines an occurrence that falls on a day the salon is shut", async () => {
+    seedSalon({ closedDays: [salonDayOfWeek(FIRST_AT)] });
+    seedSeries();
+
+    const report = await service().materialiseDue(NOW, HORIZON);
+
+    expect(report.outcomes[0]).toMatchObject({
+      status: "needs_attention",
+      reason: "NO_SLOT_WITHIN_TOLERANCE",
+    });
+    expect(db.appointments).toHaveLength(0);
+  });
+
+  it("will not run past closing time even when the rota says the staff member is there", async () => {
+    seedSalon({ businessCloseMin: 11 * 60 });
+    seedSeries();
+
+    const report = await service().materialiseDue(NOW, HORIZON);
+
+    expect(report.outcomes[0]).toMatchObject({ status: "moved", offsetMinutes: -15 });
+    expect(report.outcomes[0].startsAt).toEqual(at("2026-01-13", TEN_AM - 15));
+    const booked = db.appointments[0];
+    expect(salonWallMinutes(booked.endsAt as Date) + BUFFER_MIN).toBeLessThanOrEqual(11 * 60);
   });
 
   it("declines when nobody is trained on the service", async () => {
@@ -1190,14 +1243,21 @@ describe("series lifecycle", () => {
   it("resume closes a series whose end date passed while it was paused", async () => {
     const series = seedSeries({ active: false, endsAt: endOfSalonDay(at("2026-03-01", TEN_AM)) });
 
-    const result = await service().resume(series.id as string, new Date("2026-06-01T08:00:00.000Z"));
+    const result = await service().resume(
+      series.id as string,
+      new Date("2026-06-01T08:00:00.000Z"),
+    );
 
     expect(result).toMatchObject({ active: false, reason: "SERIES_END_REACHED" });
     expect(series.active).toBe(false);
   });
 
   it("resume refuses a series that is too stale to catch up", async () => {
-    const series = seedSeries({ active: false, intervalWeeks: 1, nextAt: at("2015-01-06", TEN_AM) });
+    const series = seedSeries({
+      active: false,
+      intervalWeeks: 1,
+      nextAt: at("2015-01-06", TEN_AM),
+    });
     await expect(service().resume(series.id as string, NOW)).rejects.toThrow("SERIES_TOO_STALE");
     expect(series.nextAt).toEqual(at("2015-01-06", TEN_AM));
   });
@@ -1211,6 +1271,13 @@ describe("series lifecycle", () => {
       endsAt: at("2025-11-04", TEN_AM + DURATION_MIN),
       status: "completed",
     });
+    const pastNeverClosed = seedAppointment({
+      id: "past-still-confirmed",
+      seriesId: series.id,
+      startsAt: at("2025-12-16", TEN_AM),
+      endsAt: at("2025-12-16", TEN_AM + DURATION_MIN),
+      status: "confirmed",
+    });
     const future = seedAppointment({
       id: "future",
       seriesId: series.id,
@@ -1223,8 +1290,9 @@ describe("series lifecycle", () => {
     expect(result.active).toBe(false);
     expect(result.endsAt).toEqual(NOW);
     expect(result.cancelledAppointmentIds).toEqual([]);
-    expect(db.appointments).toHaveLength(2);
+    expect(db.appointments).toHaveLength(3);
     expect(past.status).toBe("completed");
+    expect(pastNeverClosed.status).toBe("confirmed");
     expect(future.status).toBe("confirmed");
     expect(db.history).toHaveLength(0);
   });
@@ -1340,7 +1408,10 @@ describe("series lifecycle", () => {
 
   it("closes a series once the cursor passes its end date without deleting the history", async () => {
     seedSalon();
-    const series = seedSeries({ nextAt: FIRST_AT, endsAt: endOfSalonDay(at("2026-01-06", TEN_AM)) });
+    const series = seedSeries({
+      nextAt: FIRST_AT,
+      endsAt: endOfSalonDay(at("2026-01-06", TEN_AM)),
+    });
     seedAppointment({
       id: "historic",
       seriesId: series.id,
@@ -1561,7 +1632,6 @@ describe("reading a series back", () => {
     expect(all.map((row) => row.id)).toEqual(["active-one", "paused-one"]);
   });
 });
-
 
 describe("resilience of the cron run", () => {
   const HORIZON = new Date(FIRST_AT.getTime() + MS_PER_DAY);

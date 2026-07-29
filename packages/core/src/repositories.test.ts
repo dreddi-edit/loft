@@ -230,7 +230,9 @@ function bookingInput(fixture: Fixture, startsAt: Date) {
   };
 }
 
-describe("repositories against the live database", () => {
+const canReachDatabase = await prisma.$queryRaw`SELECT 1`.then(() => true).catch(() => false);
+
+describe.skipIf(!canReachDatabase)("repositories against the live database", () => {
   beforeEach(cleanup);
   afterEach(cleanup);
   afterAll(async () => {

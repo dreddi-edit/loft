@@ -52,7 +52,10 @@ describe("POST /api/chat/whatsapp", () => {
   it("labels the reply with the whatsapp channel, not the sms one", async () => {
     const response = await POST(jsonRequest({ text: "Vorrei prenotare", locale: "it" }));
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ channel: "whatsapp", reply: "Certo, ti prenoto." });
+    expect(await response.json()).toMatchObject({
+      channel: "whatsapp",
+      reply: "Certo, ti prenoto.",
+    });
   });
 
   it("is an unauthenticated relay only to the assistant, never to a third party", async () => {
@@ -61,13 +64,7 @@ describe("POST /api/chat/whatsapp", () => {
     );
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(Object.keys(body).sort()).toEqual([
-      "channel",
-      "intent",
-      "locale",
-      "provider",
-      "reply",
-    ]);
+    expect(Object.keys(body).sort()).toEqual(["channel", "intent", "locale", "provider", "reply"]);
     expect(runAssistant).toHaveBeenCalledWith(
       { text: "Vorrei prenotare", locale: undefined },
       expect.anything(),
@@ -105,7 +102,9 @@ describe("POST /api/chat/whatsapp", () => {
   });
 
   it("never leaks the assistant failure to the client", async () => {
-    runAssistant.mockRejectedValue(new Error("ENOTFOUND aiplatform.googleapis.com at /app/node_modules/undici"));
+    runAssistant.mockRejectedValue(
+      new Error("ENOTFOUND aiplatform.googleapis.com at /app/node_modules/undici"),
+    );
     const response = await POST(jsonRequest({ text: "ciao" }));
     const body = await response.json();
     expect(response.status).toBe(500);

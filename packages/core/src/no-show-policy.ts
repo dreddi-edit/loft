@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { getTenantContext } from "@hair-simo/db";
 import { resolveLocale, type AppLocale } from "@hair-simo/i18n";
 import type { AppointmentStatus, Channel } from "@hair-simo/db";
 
@@ -132,12 +133,30 @@ function channelProvesContact(channel: Channel): boolean {
   return channel !== "web";
 }
 
+function effectiveDepositThresholdCents(): number {
+  const override = getTenantContext()?.settings?.noShowDepositThresholdCents;
+  if (typeof override === "number" && Number.isInteger(override) && override >= 0) {
+    return override;
+  }
+  return DEPOSIT_THRESHOLD_CENTS;
+}
+
+function effectiveDepositPercentage(): number {
+  const override = getTenantContext()?.settings?.noShowDepositPercentage;
+  if (typeof override === "number" && Number.isInteger(override) && override >= 0 && override <= 100) {
+    return override;
+  }
+  return DEPOSIT_PERCENTAGE;
+}
+
 export function evaluateNoShowPolicy(input: NoShowPolicyInput): NoShowPolicyDecision {
   const parsed = policyInputSchema.parse(input);
   const price = parsed.servicePriceCents;
+  const thresholdCents = effectiveDepositThresholdCents();
+  const depositPercentage = effectiveDepositPercentage();
 
-  const depositRequired = price >= DEPOSIT_THRESHOLD_CENTS;
-  const depositCents = depositRequired ? Math.round((price * DEPOSIT_PERCENTAGE) / 100) : 0;
+  const depositRequired = price >= thresholdCents;
+  const depositCents = depositRequired ? Math.round((price * depositPercentage) / 100) : 0;
   const noShowFeeCents = Math.min(
     depositCents,
     Math.round((price * NO_SHOW_FEE_PERCENTAGE) / 100),
@@ -147,7 +166,7 @@ export function evaluateNoShowPolicy(input: NoShowPolicyInput): NoShowPolicyDeci
     return {
       depositRequired: true,
       depositCents,
-      depositPercentage: DEPOSIT_PERCENTAGE,
+      depositPercentage,
       verificationRequired: false,
       noShowFeeCents,
       reason: "deposit_required_above_threshold",

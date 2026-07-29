@@ -307,6 +307,14 @@ everything `staff` can; the table only calls out where a route is narrower.
 | `/api/waitlist` | GET | all | paginated, sorted oldest-first (the fairness queue order) |
 | `/api/waitlist/[id]` | PATCH, DELETE | owner, manager | `PATCH { status: "cancelled" \| "expired" }`; a converted entry can never be changed |
 | `/api/vouchers` | GET, POST | GET: owner, manager · POST: owner, manager | `?view=liability` returns outstanding balance instead of a list; `POST` policy `adminSensitive`; only `owner` may pass `overrideMinimumValidity` |
+| `/api/recurring` | GET, POST | GET: all · POST: owner, manager | list/create standing series |
+| `/api/recurring/[id]` | GET, PATCH | GET: all · PATCH: owner, manager | `PATCH { action: "pause" \| "resume" \| "skip" \| "end" }` |
+| `/api/customers/[id]/history` | GET | all | stylist profile via `CustomerHistoryService` |
+| `/api/customers/[id]/history/notes` | POST | all | add note / formula / allergy |
+| `/api/customers/[id]/history/notes/[noteId]` | PATCH, DELETE | all | update/delete note |
+| `/api/audit-log` | GET | owner, manager | paginated operator audit trail |
+| `/api/reviews/metrics` | GET | all | review-ask send/click metrics |
+| `/api/gdpr/requests` | GET, POST | owner, manager | DSGVO export/erasure queue |
 | `/api/calendar/feed-url` | GET | all | policy `adminSensitive`; a `staff` session may only ever fetch its own feed URL, not another staff member's |
 
 ### Error responses

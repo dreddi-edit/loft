@@ -69,7 +69,10 @@ describe("POST /api/chat/sms", () => {
   it("accepts the legacy message field", async () => {
     const response = await POST(jsonRequest({ message: "Ciao" }));
     expect(response.status).toBe(200);
-    expect(runAssistant).toHaveBeenCalledWith({ text: "Ciao", locale: undefined }, expect.anything());
+    expect(runAssistant).toHaveBeenCalledWith(
+      { text: "Ciao", locale: undefined },
+      expect.anything(),
+    );
   });
 
   it("rejects a body with neither text nor message", async () => {

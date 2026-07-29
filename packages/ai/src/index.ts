@@ -321,9 +321,9 @@ export async function runAssistant(payload: AiRequest, tools: Toolset) {
       return { ...(await runIntentTooling(payload, tools)), provider: "regex-fallback" as const };
     }
 
-    const { runGeminiAssistant, synthesizeGeminiResponse } = await import(
-      "@hair-simo/gcp/vertex-ai"
-    );
+    const { runGeminiAssistant, synthesizeGeminiResponse } =
+      await import("@hair-simo/gcp/vertex-ai");
+    const { toolDeclarations } = await import("./booking-tools");
     const systemPrompt = await buildSystemPrompt(locale, tools);
 
     let history = trimHistory(payload.conversationHistory);
@@ -334,6 +334,7 @@ export async function runAssistant(payload: AiRequest, tools: Toolset) {
       locale,
       systemPrompt,
       conversationHistory: history,
+      functionDeclarations: toolDeclarations,
     });
 
     // A model that has just learned a slot is taken needs a second round to offer another
@@ -369,6 +370,7 @@ export async function runAssistant(payload: AiRequest, tools: Toolset) {
         locale,
         systemPrompt,
         conversationHistory: history,
+        functionDeclarations: toolDeclarations,
       });
     }
 

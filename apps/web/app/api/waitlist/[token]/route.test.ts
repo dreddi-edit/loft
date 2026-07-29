@@ -22,6 +22,13 @@ vi.mock("@hair-simo/core", () => {
   }
 
   return {
+    resolveTenantContext: async () => ({
+      tenantId: "cltenant00000000000000001",
+      slug: "hairsimo-brixen",
+      displayName: "Hair Simo",
+      timeZone: "Europe/Rome",
+      defaultLocale: "it",
+    }),
     WaitlistError,
     WaitlistService: class {
       claim = mocks.claim;
@@ -33,7 +40,24 @@ vi.mock("@hair-simo/core", () => {
   };
 });
 
-vi.mock("@hair-simo/db", () => ({ prisma: { waitlist: { findUnique: mocks.findUnique } } }));
+vi.mock("@hair-simo/db", () => ({
+
+  DEFAULT_TENANT_ID: "cltenant00000000000000001",
+  DEFAULT_TENANT_SLUG: "hairsimo-brixen",
+  currentTenantId: () => "cltenant00000000000000001",
+  tenantEmailKey: (email: string) => ({ tenantId_email: { tenantId: "cltenant00000000000000001", email } }),
+  tenantPhoneKey: (phone: string) => ({ tenantId_phone: { tenantId: "cltenant00000000000000001", phone } }),
+  tenantSlugKey: (slug: string) => ({ tenantId_slug: { tenantId: "cltenant00000000000000001", slug } }),
+  tenantSkuKey: (sku: string) => ({ tenantId_sku: { tenantId: "cltenant00000000000000001", sku } }),
+  tenantCodeKey: (code: string) => ({ tenantId_code: { tenantId: "cltenant00000000000000001", code } }),
+  tenantDayOfWeekKey: (dayOfWeek: number) => ({ tenantId_dayOfWeek: { tenantId: "cltenant00000000000000001", dayOfWeek } }),
+  getTenantContext: () => undefined,
+  forEachActiveTenant: async (work: (ctx: { tenantId: string; slug: string }) => Promise<void>) => {
+    await work({ tenantId: "cltenant00000000000000001", slug: "hairsimo-brixen" });
+    return { tenantCount: 1 };
+  },
+
+  runWithTenantAsync: async (_ctx: unknown, fn: () => unknown) => fn(), prisma: { waitlist: { findUnique: mocks.findUnique } } }));
 
 import { WaitlistError } from "@hair-simo/core";
 import { resetApiLogSink, setApiLogSink } from "../../../../lib/api-handler";

@@ -4,6 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const { verifyBookingToken } = vi.hoisted(() => ({ verifyBookingToken: vi.fn() }));
 
 vi.mock("@hair-simo/core", () => ({
+  resolveTenantContext: async () => ({
+    tenantId: "cltenant00000000000000001",
+    slug: "hairsimo-brixen",
+    displayName: "Hair Simo",
+    timeZone: "Europe/Rome",
+    defaultLocale: "it",
+  }),
   verifyBookingToken,
   VERIFICATION_INVALID: "BOOKING_VERIFICATION_INVALID",
   VERIFICATION_CANCELLED: "BOOKING_VERIFICATION_APPOINTMENT_CANCELLED",

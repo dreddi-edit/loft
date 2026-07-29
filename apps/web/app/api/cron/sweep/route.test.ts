@@ -5,14 +5,62 @@ const { core } = vi.hoisted(() => ({
   core: {
     expireUnverifiedBefore: vi.fn(),
     releaseOrphanedUnverified: vi.fn(),
+    waitlistExpire: vi.fn(),
+    reviewDispatchDue: vi.fn(),
+    recurringMaterialiseDue: vi.fn(),
+    retentionSweep: vi.fn(),
   },
 }));
 
 vi.mock("@hair-simo/core", () => ({
+  resolveTenantContext: async () => ({
+    tenantId: "cltenant00000000000000001",
+    slug: "hairsimo-brixen",
+    displayName: "Hair Simo",
+    timeZone: "Europe/Rome",
+    defaultLocale: "it",
+  }),
   SWEEP_BATCH_SIZE: 200,
   expireUnverifiedBefore: core.expireUnverifiedBefore,
   releaseOrphanedUnverified: core.releaseOrphanedUnverified,
+  WaitlistService: class {
+    expire = core.waitlistExpire;
+  },
+  ReviewRequestService: class {
+    dispatchDue = core.reviewDispatchDue;
+  },
+  RecurringService: class {
+    materialiseDue = core.recurringMaterialiseDue;
+  },
+  dataRetentionService: {
+    sweep: core.retentionSweep,
+  },
 }));
+
+vi.mock("@hair-simo/db", () => ({
+
+  DEFAULT_TENANT_ID: "cltenant00000000000000001",
+  DEFAULT_TENANT_SLUG: "hairsimo-brixen",
+  currentTenantId: () => "cltenant00000000000000001",
+  tenantEmailKey: (email: string) => ({ tenantId_email: { tenantId: "cltenant00000000000000001", email } }),
+  tenantPhoneKey: (phone: string) => ({ tenantId_phone: { tenantId: "cltenant00000000000000001", phone } }),
+  tenantSlugKey: (slug: string) => ({ tenantId_slug: { tenantId: "cltenant00000000000000001", slug } }),
+  tenantSkuKey: (sku: string) => ({ tenantId_sku: { tenantId: "cltenant00000000000000001", sku } }),
+  tenantCodeKey: (code: string) => ({ tenantId_code: { tenantId: "cltenant00000000000000001", code } }),
+  tenantDayOfWeekKey: (dayOfWeek: number) => ({ tenantId_dayOfWeek: { tenantId: "cltenant00000000000000001", dayOfWeek } }),
+  getTenantContext: () => undefined,
+  forEachActiveTenant: async (work: (ctx: { tenantId: string; slug: string }) => Promise<void>) => {
+    await work({ tenantId: "cltenant00000000000000001", slug: "hairsimo-brixen" });
+    return { tenantCount: 1 };
+  },
+
+  forEachActiveTenant: async (work: (ctx: { tenantId: string; slug: string }) => Promise<void>) => {
+    await work({ tenantId: "cltenant00000000000000001", slug: "hairsimo-brixen" });
+    return { tenantCount: 1 };
+  },
+  runWithTenantAsync: async (_ctx: unknown, fn: () => unknown) => fn(),
+}));
+
 
 import { resetApiLogSink, setApiLogSink, type LogRecord } from "../../../../lib/api-handler";
 import { resetRateLimitStore } from "../../../../lib/rate-limit";
@@ -37,6 +85,10 @@ beforeEach(() => {
   resetSharedSecretWarnings();
   core.expireUnverifiedBefore.mockReset().mockResolvedValue(0);
   core.releaseOrphanedUnverified.mockReset().mockResolvedValue(0);
+  core.waitlistExpire.mockReset().mockResolvedValue({ releasedOffers: 0, expiredWindows: 0, cancelledForErasedCustomers: 0 });
+  core.reviewDispatchDue.mockReset().mockResolvedValue({ sent: 0, simulated: 0, failed: 0, skipped: 0, results: [] });
+  core.recurringMaterialiseDue.mockReset().mockResolvedValue({ booked: 0, moved: 0, needsAttention: 0, skipped: 0, outcomes: [] });
+  core.retentionSweep.mockReset().mockResolvedValue({ removed: 0, redacted: 0, skipped: 0, errors: [] });
   vi.stubEnv("GCP_CLOUD_TASKS_SECRET", SECRET);
   vi.stubEnv("CRON_SECRET", "");
   vi.spyOn(console, "warn").mockImplementation(() => {});

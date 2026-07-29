@@ -1,10 +1,19 @@
 import {
+  RecurringService,
+  ReviewRequestService,
   SWEEP_BATCH_SIZE,
+  WaitlistService,
+  dataRetentionService,
   expireUnverifiedBefore,
   releaseOrphanedUnverified,
 } from "@hair-simo/core";
+import { forEachActiveTenant } from "@hair-simo/db";
 import { z } from "zod";
 import { apiRoute, type ApiLogger } from "../../../../lib/api-handler";
+
+const waitlistService = new WaitlistService();
+const reviewService = new ReviewRequestService();
+const recurringService = new RecurringService();
 
 const CRON_BODY_LIMIT_BYTES = 1_024;
 
@@ -56,11 +65,21 @@ async function runJob(
   }
 }
 
+async function acrossTenants(work: () => Promise<number>): Promise<number> {
+  let total = 0;
+  await forEachActiveTenant(async () => {
+    total += await work();
+  });
+  return total;
+}
+
 /**
  * The periodic maintenance run. Same shared secret and same fail-closed contract as
  * /api/cron/reminders: apiRoute calls requireSharedSecret at module init, so a production
  * deployment without GCP_CLOUD_TASKS_SECRET / CRON_SECRET fails at boot rather than
  * exposing an open endpoint.
+ *
+ * Each job runs once per active tenant so multi-salon rows are not skipped.
  *
  * Safe to run concurrently with itself and with a customer acting on the same booking:
  * every release inside booking-verification-service is a conditional UPDATE guarded by
@@ -87,23 +106,55 @@ export const POST = apiRoute<z.infer<typeof sweepSchema>>(
     const limit = body.limit;
 
     const jobs: SweepJobResult[] = [
-      await runJob("expire-unverified", () => expireUnverifiedBefore(ranAt, { limit }), log),
+      await runJob(
+        "expire-unverified",
+        () => acrossTenants(() => expireUnverifiedBefore(ranAt, { limit })),
+        log,
+      ),
       await runJob(
         "release-orphaned-unverified",
-        () => releaseOrphanedUnverified(ranAt, { limit }),
+        () => acrossTenants(() => releaseOrphanedUnverified(ranAt, { limit })),
+        log,
+      ),
+      await runJob(
+        "waitlist-expire",
+        () =>
+          acrossTenants(async () => {
+            const result = await waitlistService.expire(ranAt);
+            return (
+              result.releasedOffers + result.expiredWindows + result.cancelledForErasedCustomers
+            );
+          }),
+        log,
+      ),
+      await runJob(
+        "review-dispatch",
+        () =>
+          acrossTenants(async () => {
+            const result = await reviewService.dispatchDue({ now: ranAt, limit });
+            return result.sent + result.simulated;
+          }),
+        log,
+      ),
+      await runJob(
+        "data-retention",
+        () =>
+          acrossTenants(async () => {
+            const result = await dataRetentionService.sweep({ now: ranAt, batchSize: limit });
+            return result.removed + result.redacted;
+          }),
+        log,
+      ),
+      await runJob(
+        "recurring-materialise",
+        () =>
+          acrossTenants(async () => {
+            const result = await recurringService.materialiseDue(ranAt);
+            return result.booked + result.moved;
+          }),
         log,
       ),
     ];
-
-    // === CALL SITES OWNED BY OTHER AGENTS — add them here, one runJob each ===
-    // waitlist expiry:  new WaitlistService().expire(ranAt)      -> WaitlistExpireResult
-    // review dispatch:  new ReviewRequestService().dispatchDue() -> ReviewDispatchSummary
-    // retention sweep:  GDPR retention job (packages/core/src/gdpr-service.ts), not written yet
-    //
-    // runJob expects Promise<number>, so map the summary onto the one number that means
-    // "rows this run acted on" (e.g. `(await service.expire(ranAt)).expired`). Keep each
-    // call in its own runJob so one failing job cannot cancel the others.
-    // ========================================================================
 
     const failed = jobs.filter((entry) => !entry.ok).length;
     if (failed > 0) {

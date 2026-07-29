@@ -5,24 +5,19 @@ type Row = Record<string, unknown>;
 /* ------------------------------------------------------------------ *
  * In-memory Prisma double.
  *
- * The clock is anchored to the suite's NOW, not to the epoch: a 1970 fake
- * clock makes every "is this row newer than X" comparison trivially true
- * and hides exactly the bugs these tests exist to find.
+ * Every stored instant is anchored to the suite's own timeline rather than
+ * to the epoch, so window filters are exercised against realistic values
+ * instead of being trivially satisfied by 1970 timestamps.
  *
  * `select` is honoured rather than ignored, so a service that reads a
- * column it forgot to select gets `undefined` here just like in Postgres.
+ * column it forgot to select gets `null` here just like in Postgres, and
+ * `settle()` adds real latency so concurrent reads genuinely interleave.
  * ------------------------------------------------------------------ */
 
 const { db, store } = vi.hoisted(() => {
   const appointments: Row[] = [];
   const staffProfiles: Row[] = [];
-  let sequence = 0;
   let latency = 0;
-
-  function tick(): Date {
-    sequence += 1;
-    return new Date(Date.parse("2026-07-20T09:02:31.000Z") + sequence);
-  }
 
   async function settle(): Promise<void> {
     if (latency <= 0) {
@@ -117,11 +112,9 @@ const { db, store } = vi.hoisted(() => {
     store: {
       appointments,
       staffProfiles,
-      tick,
       reset() {
         appointments.length = 0;
         staffProfiles.length = 0;
-        sequence = 0;
         latency = 0;
       },
       setLatency(value: number) {
@@ -131,7 +124,23 @@ const { db, store } = vi.hoisted(() => {
   };
 });
 
-vi.mock("@hair-simo/db", () => ({ prisma: db }));
+vi.mock("@hair-simo/db", () => ({
+
+  DEFAULT_TENANT_ID: "cltenant00000000000000001",
+  DEFAULT_TENANT_SLUG: "hairsimo-brixen",
+  currentTenantId: () => "cltenant00000000000000001",
+  tenantEmailKey: (email: string) => ({ tenantId_email: { tenantId: "cltenant00000000000000001", email } }),
+  tenantPhoneKey: (phone: string) => ({ tenantId_phone: { tenantId: "cltenant00000000000000001", phone } }),
+  tenantSlugKey: (slug: string) => ({ tenantId_slug: { tenantId: "cltenant00000000000000001", slug } }),
+  tenantSkuKey: (sku: string) => ({ tenantId_sku: { tenantId: "cltenant00000000000000001", sku } }),
+  tenantCodeKey: (code: string) => ({ tenantId_code: { tenantId: "cltenant00000000000000001", code } }),
+  tenantDayOfWeekKey: (dayOfWeek: number) => ({ tenantId_dayOfWeek: { tenantId: "cltenant00000000000000001", dayOfWeek } }),
+  getTenantContext: () => undefined,
+  forEachActiveTenant: async (work: (ctx: { tenantId: string; slug: string }) => Promise<void>) => {
+    await work({ tenantId: "cltenant00000000000000001", slug: "hairsimo-brixen" });
+    return { tenantCount: 1 };
+  },
+ prisma: db }));
 
 import {
   DEFAULT_ORGANIZER_EMAIL,
@@ -651,7 +660,9 @@ describe("appointmentSequence", () => {
   it("is 0 while nothing changes, so a re-sent confirmation stays quiet", () => {
     const stamp = new Date("2026-07-20T09:00:00.000Z");
     expect(appointmentSequence({ createdAt: stamp, updatedAt: stamp })).toBe(0);
-    expect(appointmentSequence({ createdAt: stamp, updatedAt: new Date(stamp.getTime() + 999) })).toBe(0);
+    expect(
+      appointmentSequence({ createdAt: stamp, updatedAt: new Date(stamp.getTime() + 999) }),
+    ).toBe(0);
   });
 
   it("is 0 rather than negative or NaN for missing or reversed stamps", () => {
@@ -736,10 +747,7 @@ describe("buildAppointmentIcs", () => {
   });
 
   it("publishes instead of requesting when there is no usable customer address", () => {
-    const ics = buildAppointmentIcs(
-      { ...goldenAppointment, customerEmail: null },
-      goldenOptions,
-    );
+    const ics = buildAppointmentIcs({ ...goldenAppointment, customerEmail: null }, goldenOptions);
     valid(ics);
     expect(propertyLines(ics, "METHOD")).toEqual(["PUBLISH"]);
     expect(propertyLines(ics, "ATTENDEE")).toEqual([]);
@@ -818,9 +826,7 @@ describe("buildAppointmentIcs", () => {
   });
 
   it("rejects structurally impossible input", () => {
-    expect(() =>
-      buildAppointmentIcs({ ...goldenAppointment, id: "" }, goldenOptions),
-    ).toThrow();
+    expect(() => buildAppointmentIcs({ ...goldenAppointment, id: "" }, goldenOptions)).toThrow();
     expect(() =>
       buildAppointmentIcs(
         { ...goldenAppointment, startsAt: "2026-08-04" as unknown as Date },
@@ -887,10 +893,10 @@ describe("line folding in generated calendars", () => {
   });
 
   it("does not corrupt astral characters when folding a real description", () => {
-    const ics = buildStaffFeed(
-      [{ ...goldenAppointment, notes: "😀".repeat(60) }],
-      { ...goldenOptions, locale: "de" },
-    );
+    const ics = buildStaffFeed([{ ...goldenAppointment, notes: "😀".repeat(60) }], {
+      ...goldenOptions,
+      locale: "de",
+    });
     valid(ics);
     expect(ics).not.toContain("�");
     expect(propertyLines(ics, "DESCRIPTION").join("")).toContain("😀".repeat(60));
@@ -966,14 +972,14 @@ describe("DTSTART and DTEND across the Europe/Rome DST transitions", () => {
   });
 
   it("disambiguates the repeated hour when the caller asks for UTC", () => {
-    const first = buildAppointmentIcs(
-      appointmentAt("x", "2026-10-25T00:30:00.000Z", 20),
-      { ...goldenOptions, timeMode: "utc" },
-    );
-    const second = buildAppointmentIcs(
-      appointmentAt("x", "2026-10-25T01:30:00.000Z", 20),
-      { ...goldenOptions, timeMode: "utc" },
-    );
+    const first = buildAppointmentIcs(appointmentAt("x", "2026-10-25T00:30:00.000Z", 20), {
+      ...goldenOptions,
+      timeMode: "utc",
+    });
+    const second = buildAppointmentIcs(appointmentAt("x", "2026-10-25T01:30:00.000Z", 20), {
+      ...goldenOptions,
+      timeMode: "utc",
+    });
     expect(eventProperty(first, "DTSTART").value).toBe("20261025T003000Z");
     expect(eventProperty(second, "DTSTART").value).toBe("20261025T013000Z");
 
@@ -985,7 +991,9 @@ describe("DTSTART and DTEND across the Europe/Rome DST transitions", () => {
       appointmentAt("x", "2026-10-25T01:30:00.000Z", 20),
       goldenOptions,
     );
-    expect(eventProperty(localFirst, "DTSTART").value).toBe(eventProperty(localSecond, "DTSTART").value);
+    expect(eventProperty(localFirst, "DTSTART").value).toBe(
+      eventProperty(localSecond, "DTSTART").value,
+    );
   });
 
   it("produces the same stamps whatever the host timezone is", () => {
@@ -1157,13 +1165,22 @@ describe("buildCancellationIcs", () => {
 
   it("pins the sequence when the caller passes one, including the falsy zero", () => {
     expect(
-      propertyLines(buildCancellationIcs(goldenAppointment, { ...goldenOptions, sequence: 9 }), "SEQUENCE"),
+      propertyLines(
+        buildCancellationIcs(goldenAppointment, { ...goldenOptions, sequence: 9 }),
+        "SEQUENCE",
+      ),
     ).toEqual(["9"]);
     expect(
-      propertyLines(buildCancellationIcs(goldenAppointment, { ...goldenOptions, sequence: 0 }), "SEQUENCE"),
+      propertyLines(
+        buildCancellationIcs(goldenAppointment, { ...goldenOptions, sequence: 0 }),
+        "SEQUENCE",
+      ),
     ).toEqual(["0"]);
     expect(
-      propertyLines(buildAppointmentIcs(goldenAppointment, { ...goldenOptions, sequence: 0 }), "SEQUENCE"),
+      propertyLines(
+        buildAppointmentIcs(goldenAppointment, { ...goldenOptions, sequence: 0 }),
+        "SEQUENCE",
+      ),
     ).toEqual(["0"]);
   });
 
@@ -1635,10 +1652,7 @@ describe("Prisma-backed reads", () => {
 describe("adversarial input", () => {
   it("cannot be talked into a second VEVENT through a service name", () => {
     const injected = "Cut\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:evil@attacker\r\nSUMMARY:Evil";
-    const ics = buildAppointmentIcs(
-      { ...goldenAppointment, serviceName: injected },
-      goldenOptions,
-    );
+    const ics = buildAppointmentIcs({ ...goldenAppointment, serviceName: injected }, goldenOptions);
     valid(ics);
     expect(events(ics)).toHaveLength(1);
     expect(propertyLines(ics, "UID")).toEqual(["cme8appt0001@hairsimo.it"]);
@@ -1649,7 +1663,8 @@ describe("adversarial input", () => {
     const ics = buildAppointmentIcs(
       {
         ...goldenAppointment,
-        customerEmail: "anna@example.com\r\nBEGIN:VEVENT\r\nUID:evil@attacker\r\nDTSTAMP:20260101T000000Z\r\nDTSTART:20260101T000000Z\r\nEND:VEVENT",
+        customerEmail:
+          "anna@example.com\r\nBEGIN:VEVENT\r\nUID:evil@attacker\r\nDTSTAMP:20260101T000000Z\r\nDTSTART:20260101T000000Z\r\nEND:VEVENT",
       },
       goldenOptions,
     );
@@ -1682,10 +1697,10 @@ describe("adversarial input", () => {
   });
 
   it("strips control characters that a client would refuse to parse", () => {
-    const ics = buildStaffFeed(
-      [{ ...goldenAppointment, notes: "vor\u0000sicht\u0007 bitte" }],
-      { ...goldenOptions, locale: "de" },
-    );
+    const ics = buildStaffFeed([{ ...goldenAppointment, notes: "vor\u0000sicht\u0007 bitte" }], {
+      ...goldenOptions,
+      locale: "de",
+    });
     valid(ics);
     // eslint-disable-next-line no-control-regex -- asserting the absence of exactly these
     expect(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(ics)).toBe(false);
@@ -1706,7 +1721,10 @@ describe("adversarial input", () => {
   it("does not let one corrupt row silently disappear from a feed", () => {
     expect(() =>
       buildStaffFeed(
-        [goldenAppointment, { ...goldenAppointment, id: "bad", endsAt: goldenAppointment.startsAt }],
+        [
+          goldenAppointment,
+          { ...goldenAppointment, id: "bad", endsAt: goldenAppointment.startsAt },
+        ],
         { ...goldenOptions, locale: "de" },
       ),
     ).toThrow("ICS_INVALID_TIME_RANGE");

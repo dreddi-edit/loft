@@ -2,7 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { SignJWT, jwtVerify } from "jose";
 import { z } from "zod";
-import { prisma, type RoleKey } from "@hair-simo/db";
+import { prisma, DEFAULT_TENANT_ID, DEFAULT_TENANT_SLUG, tenantEmailKey, type RoleKey } from "@hair-simo/db";
 
 const loginSchema = z
   .object({
@@ -37,6 +37,8 @@ export type AuthSession = {
   role: RoleKey;
   firstName: string;
   lastName: string;
+  tenantId: string;
+  tenantSlug: string;
   provider?: "local-jwt" | "identity-platform";
 };
 
@@ -47,6 +49,8 @@ const adminTokenClaimsSchema = z.object({
   role: z.enum(ADMIN_ROLE_KEYS),
   firstName: z.string(),
   lastName: z.string(),
+  tenantId: z.string().min(1),
+  tenantSlug: z.string().min(1),
   tokenVersion: z.string().min(1),
   provider: z.enum(["local-jwt", "identity-platform"]).optional(),
 });
@@ -99,7 +103,7 @@ type ResolvedUser = { session: AuthSession; tokenVersion: string };
 async function resolveUserSession(userId: string): Promise<ResolvedUser> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    include: { roles: { include: { role: true } } },
+    include: { roles: { include: { role: true } }, tenant: true },
   });
   if (!user || !user.active) throw new Error("USER_NOT_FOUND");
   const role = user.roles[0]?.role.key ?? "staff";
@@ -110,6 +114,8 @@ async function resolveUserSession(userId: string): Promise<ResolvedUser> {
       role,
       firstName: user.firstName,
       lastName: user.lastName,
+      tenantId: user.tenantId ?? DEFAULT_TENANT_ID,
+      tenantSlug: user.tenant?.slug ?? DEFAULT_TENANT_SLUG,
     },
     tokenVersion: toTokenVersion(user.updatedAt),
   };
@@ -146,8 +152,8 @@ export class AuthService {
   async login(rawInput: unknown) {
     const input = loginSchema.parse(rawInput);
     const user = await prisma.user.findUnique({
-      where: { email: input.email },
-      include: { roles: { include: { role: true } } },
+      where: tenantEmailKey(input.email),
+      include: { roles: { include: { role: true } }, tenant: true },
     });
 
     const passwordHash = user && user.active ? user.passwordHash : DUMMY_PASSWORD_HASH;
@@ -160,6 +166,8 @@ export class AuthService {
       role: user.roles[0]?.role.key ?? "staff",
       firstName: user.firstName,
       lastName: user.lastName,
+      tenantId: user.tenantId ?? DEFAULT_TENANT_ID,
+      tenantSlug: user.tenant?.slug ?? DEFAULT_TENANT_SLUG,
       provider: "local-jwt",
     };
 
@@ -178,7 +186,7 @@ export class AuthService {
     }
 
     const identity = await verifyIdToken(input.idToken);
-    const user = await prisma.user.findUnique({ where: { email: identity.email } });
+    const user = await prisma.user.findUnique({ where: tenantEmailKey(identity.email) });
     if (!user) throw new Error("INVALID_CREDENTIALS");
 
     const resolved = await resolveUserSession(user.id);
@@ -194,7 +202,7 @@ export class AuthService {
       try {
         const { verifyIdToken } = await import("@hair-simo/gcp/identity-platform");
         const identity = await verifyIdToken(token);
-        const user = await prisma.user.findUnique({ where: { email: identity.email } });
+        const user = await prisma.user.findUnique({ where: tenantEmailKey(identity.email) });
         if (!user) throw new Error("USER_NOT_FOUND");
         const resolved = await resolveUserSession(user.id);
         return { ...resolved.session, provider: "identity-platform" };

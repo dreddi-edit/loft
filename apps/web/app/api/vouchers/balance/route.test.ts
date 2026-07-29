@@ -4,13 +4,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const { balanceMock } = vi.hoisted(() => ({ balanceMock: vi.fn() }));
 
 vi.mock("@hair-simo/core", () => ({
+  resolveTenantContext: async () => ({
+    tenantId: "cltenant00000000000000001",
+    slug: "hairsimo-brixen",
+    displayName: "Hair Simo",
+    timeZone: "Europe/Rome",
+    defaultLocale: "it",
+  }),
   VoucherService: class {
     balance = balanceMock;
   },
 }));
 
 import { REQUEST_ID_HEADER, resetApiLogSink, setApiLogSink, type LogRecord } from "../../../../lib/api-handler";
-import { RATE_LIMIT_POLICIES, effectiveLimit, resetRateLimitStore } from "../../../../lib/rate-limit";
+import {
+  RATE_LIMIT_POLICIES,
+  effectiveLimit,
+  getRateLimitStore,
+  resetRateLimitStore,
+} from "../../../../lib/rate-limit";
 import { GET } from "./route";
 
 const CLOUD_RUN_CHAIN = "203.0.113.7, 35.191.10.1";
@@ -144,6 +156,15 @@ describe("GET /api/vouchers/balance enumeration resistance", () => {
     expect((await blocked.json()).error).toBe("RATE_LIMITED");
     expect(Number(blocked.headers.get("Retry-After"))).toBeGreaterThan(0);
     expect(CEILING).toBeLessThanOrEqual(5);
+  });
+
+  it("keeps its own bucket so it cannot spend the contact form's allowance", async () => {
+    balanceMock.mockResolvedValue(liveVoucher());
+    await lookup(CODE);
+
+    const store = getRateLimitStore();
+    expect(await store.get("contact:voucher-balance:203.0.113.7")).toMatchObject({ count: 1 });
+    expect(await store.get("contact:203.0.113.7")).toBeNull();
   });
 
   it("throttles per client address rather than globally", async () => {

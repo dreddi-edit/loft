@@ -1043,6 +1043,75 @@ resource "google_cloud_scheduler_job" "reminders" {
   depends_on = [google_cloud_run_v2_service_iam_member.web_scheduler]
 }
 
+resource "google_cloud_scheduler_job" "sweep" {
+  name             = "hair-simo-maintenance-sweep"
+  description      = "Hourly maintenance: unverified bookings, waitlist, reviews, retention"
+  region           = var.region
+  schedule         = "15 * * * *"
+  time_zone        = "Europe/Rome"
+  attempt_deadline = "320s"
+
+  retry_config {
+    retry_count          = 3
+    min_backoff_duration = "10s"
+    max_backoff_duration = "300s"
+    max_doublings        = 3
+  }
+
+  http_target {
+    http_method = "POST"
+    uri         = "https://${var.web_domain}/api/cron/sweep"
+    headers = {
+      "Content-Type"  = "application/json"
+      "X-Cron-Secret" = var.cron_secret
+    }
+    body = base64encode(jsonencode({ limit = 200 }))
+
+    oidc_token {
+      service_account_email = google_service_account.scheduler.email
+      audience              = "https://${var.web_domain}/api/cron/sweep"
+    }
+  }
+
+  depends_on = [google_cloud_run_v2_service_iam_member.web_scheduler]
+}
+
+resource "google_pubsub_subscription" "notifications_push" {
+  name  = "hair-simo-${var.environment}-notifications-push"
+  topic = google_pubsub_topic.notifications.name
+
+  ack_deadline_seconds       = 60
+  labels                     = local.labels
+  message_retention_duration = "604800s"
+
+  expiration_policy {
+    ttl = ""
+  }
+
+  push_config {
+    push_endpoint = "https://${var.web_domain}/api/tasks/pubsub"
+    oidc_token {
+      service_account_email = google_service_account.scheduler.email
+      audience              = "https://${var.web_domain}/api/tasks/pubsub"
+    }
+  }
+
+  retry_policy {
+    minimum_backoff = "10s"
+    maximum_backoff = "600s"
+  }
+
+  dead_letter_policy {
+    dead_letter_topic     = google_pubsub_topic.notifications_dead_letter.id
+    max_delivery_attempts = 10
+  }
+
+  depends_on = [
+    google_pubsub_topic_iam_member.dead_letter_publisher,
+    google_cloud_run_v2_service_iam_member.web_scheduler,
+  ]
+}
+
 resource "google_monitoring_notification_channel" "email" {
   count        = var.enable_monitoring ? 1 : 0
   display_name = "Hair Simo Ops"

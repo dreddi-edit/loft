@@ -456,7 +456,10 @@ const OFFER_PLACEHOLDER = /{{(name|time|service|expires|link)}}/g;
  * substituted back in, corrupting the rest of the message and leaving the claim link out.
  */
 function renderOfferBody(template: string, values: Record<string, string>): string {
-  return template.replace(OFFER_PLACEHOLDER, (placeholder, key: string) => values[key] ?? placeholder);
+  return template.replace(
+    OFFER_PLACEHOLDER,
+    (placeholder, key: string) => values[key] ?? placeholder,
+  );
 }
 
 function claimUrlBase(locale: AppLocale, override?: string): string {

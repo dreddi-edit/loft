@@ -69,16 +69,15 @@ up to three people at once in strict join order; whoever claims first via
 `POST /api/waitlist/[token]` gets the appointment, everyone else is told immediately and
 returned to the front of the queue with no penalty. Admin visibility and manual
 cancel/expire: `GET`/`PATCH`/`DELETE /api/waitlist[/id]`. The automatic expiry sweep
-(`WaitlistService.expire`) is not yet called from `/api/cron/sweep` — run it by hand or
-wire it in before relying on stale offers clearing themselves.
+(`WaitlistService.expire`) runs from `POST /api/cron/sweep` as the `waitlist-expire` job.
 
 ### Recurring series
 
 A standing weekly/N-weekly booking is created with `RecurringService.createSeries` and
-turned into real appointments by `RecurringService.materialiseDue`, which needs to run on a
-schedule (there is no route or cron entry for it yet — see `docs/architecture.md`). Pausing,
-resuming, skipping one occurrence, and ending a series (optionally cancelling future
-occurrences) are all service methods; none has an admin route today.
+turned into real appointments by `RecurringService.materialiseDue`, scheduled via
+`POST /api/cron/sweep` (`recurring-materialise`). Admin list/create:
+`GET`/`POST /api/recurring`. Pausing, resuming, skipping one occurrence, and ending a series
+(optionally cancelling future occurrences) remain service methods without dedicated routes.
 
 ## 4) Payment operations (Google Pay)
 
@@ -163,14 +162,14 @@ Reminder pipeline:
    publishing to the Pub/Sub topic `hair-simo-notifications` and reporting `sent` as soon as
    the publish itself succeeds.
 3. **There is no consumer of that Pub/Sub topic in this repository.** An SMS or WhatsApp
-   reminder is published and then delivered by nothing — there is no partner worker, no
-   push subscription, no Cloud Function wired up. Only e-mail and cron-scheduled
-   Cloud-Tasks delivery are connected end to end today. Do not tell a customer "we text
-   reminders" until this is closed.
+   reminder is published and then delivered by `POST /api/tasks/pubsub` when the push
+   subscription is configured — there is no separate partner worker. Only e-mail and
+   cron-scheduled Cloud-Tasks delivery are connected end to end without Pub/Sub setup.
 
 Review-request pipeline (`ReviewRequestService.dispatchDue`) follows the same
-delay/cooldown/lifetime-cap logic as reminders but **has no cron entry point yet** — see
-`docs/architecture.md`.
+delay/cooldown/lifetime-cap logic as reminders and is dispatched by `POST /api/cron/sweep`
+(`review-dispatch`). Click tracking: `GET /api/review/[token]`; admin metrics:
+`GET /api/reviews/metrics`.
 
 ## 9) Waitlist, vouchers, recurring series, review requests — operational summary
 
@@ -179,28 +178,28 @@ each. As a quick reference for what is actually reachable today (2026-07-29):
 
 | Capability | Customer-facing route | Admin route | Scheduled job |
 |---|---|---|---|
-| Waitlist | `POST /api/waitlist`, `GET`/`POST /api/waitlist/[token]` | `GET /api/waitlist`, `PATCH`/`DELETE /api/waitlist/[id]` | not wired |
-| Vouchers | `GET /api/vouchers/balance` | `GET`/`POST /api/vouchers` | n/a |
-| Recurring series | none | none | not wired |
-| Review requests | `GET /api/review/[token]` — **not present**, see below | none | not wired |
-| No-show verification | `GET /api/verify/[token]`, `POST /api/verify/resend` | none | `POST /api/cron/sweep` |
-| Customer history / colour formulas | n/a | none — `apps/admin/app/api/customers/[id]` still uses the older `salonRepository.addCustomerNote`, not `CustomerHistoryService` | n/a |
-| GDPR export/erasure | none | none | not wired |
+| Waitlist | `POST /api/waitlist`, `GET`/`POST /api/waitlist/[token]` | `GET /api/waitlist`, `PATCH`/`DELETE /api/waitlist/[id]` | `POST /api/cron/sweep` → `waitlist-expire` |
+| Vouchers | `GET /api/vouchers/balance`; optional `voucherCode` on `POST /api/payments/checkout` | `GET`/`POST /api/vouchers`, `POST /api/vouchers/redeem` | n/a |
+| Recurring series | none | `GET`/`POST /api/recurring`, `GET`/`PATCH /api/recurring/[id]` (`pause`/`resume`/`skip`/`end`) | `POST /api/cron/sweep` → `recurring-materialise` |
+| Review requests | `GET /api/review/[token]` | `GET /api/reviews/metrics` | `POST /api/cron/sweep` → `review-dispatch` |
+| No-show verification | `GET /api/verify/[token]`, `POST /api/verify/resend` | none | `POST /api/cron/sweep` → `expire-unverified`, `release-orphaned-unverified` |
+| Customer history / colour formulas | n/a | `GET /api/customers/[id]/history`, `POST`/`PATCH`/`DELETE …/history/notes` (`CustomerHistoryService`) | n/a |
+| GDPR export/erasure | none | `GET`/`POST /api/gdpr/requests`, `PATCH /api/gdpr/requests/[id]` | `POST /api/cron/sweep` → `data-retention` |
 | ICS calendar | `GET /api/calendar/[token]`, `GET /api/calendar/appointment/[token]` | `GET /api/calendar/feed-url` | n/a |
 
-`ReviewRequestService.buildReviewUrl` builds a link of the shape
-`.../api/review/<token>`, but no `apps/web/app/api/review/[token]` route exists yet in this
-snapshot — a review-request e-mail sent today would link to a 404. Confirm this against the
-filesystem before sending one.
+`POST /api/cron/sweep` runs six independent jobs (each reported in the response `jobs`
+array): `expire-unverified`, `release-orphaned-unverified`, `waitlist-expire`,
+`review-dispatch`, `data-retention`, `recurring-materialise`. SMS/WhatsApp delivery from
+Pub/Sub is handled by `POST /api/tasks/pubsub` (push subscription to the web app).
 
 ## 10) GDPR: export, erasure, data retention
 
 `GdprService` (`packages/core/src/gdpr-service.ts`) implements Art. 15/20 export and Art. 17
 erasure, tracked through the `DataRequest` model (`type: export | erasure`,
-`status: pending | processing | completed | failed`). **No admin or customer-facing route
-calls this service yet** — today it is only reachable from a Node REPL, a script, or a test.
-Treat "GDPR requests can be handled" as false until a route exists; verify against
-`apps/admin/app/api` before promising a customer a self-service export or deletion.
+`status: pending | processing | completed | failed`). Admin queue and filing:
+`GET`/`POST /api/gdpr/requests`, processing: `PATCH /api/gdpr/requests/[id]`. There is still
+no customer self-service route — exports and erasures are operator-initiated from the admin
+app.
 
 Erasure anonymises rather than deletes: identifiers are destroyed or replaced with an
 irreversible placeholder, but the appointment, payment and refund rows survive, because

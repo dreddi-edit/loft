@@ -580,7 +580,9 @@ export class RecurringService {
         if (committed.kind === "raced") break;
         if (committed.kind === "duplicate") {
           outcomes.push(
-            outcomeFor(series, cursor, "already_booked", { appointmentId: committed.appointmentId }),
+            outcomeFor(series, cursor, "already_booked", {
+              appointmentId: committed.appointmentId,
+            }),
           );
         } else if (committed.kind === "created" && chosen) {
           outcomes.push(

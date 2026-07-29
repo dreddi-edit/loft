@@ -137,6 +137,74 @@ function transportNotConfigured(
   return { status: "simulated", provider, reason };
 }
 
+async function sendViaPlivo(payload: SendPayload): Promise<DeliveryOutcome> {
+  const authId = process.env.PLIVO_AUTH_ID?.trim();
+  const authToken = process.env.PLIVO_AUTH_TOKEN?.trim();
+  const from = process.env.PLIVO_FROM_NUMBER?.trim();
+  if (!authId || !authToken || !from) {
+    return transportNotConfigured(payload, "plivo", "PLIVO_NOT_CONFIGURED");
+  }
+
+  const credentials = Buffer.from(`${authId}:${authToken}`).toString("base64");
+  const response = await fetch(`https://api.plivo.com/v1/Account/${authId}/Message/`, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${credentials}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      src: from,
+      dst: payload.recipient,
+      text: payload.message,
+    }),
+  });
+
+  if (!response.ok) {
+    const detail = (await response.text()).slice(0, 300);
+    return { status: "failed", provider: "plivo", reason: "PLIVO_SEND_FAILED", detail };
+  }
+
+  const result = (await response.json()) as { message_uuid?: string[] };
+  return { status: "sent", provider: "plivo", messageId: result.message_uuid?.[0] };
+}
+
+async function sendViaMetaWhatsApp(payload: SendPayload): Promise<DeliveryOutcome> {
+  const token = process.env.META_WHATSAPP_TOKEN?.trim();
+  const phoneNumberId = process.env.META_WHATSAPP_PHONE_NUMBER_ID?.trim();
+  if (!token || !phoneNumberId) {
+    return transportNotConfigured(payload, "meta-whatsapp", "META_WHATSAPP_NOT_CONFIGURED");
+  }
+
+  const response = await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}/messages`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      to: payload.recipient.replace(/\D/g, ""),
+      type: "text",
+      text: { body: payload.message },
+    }),
+  });
+
+  if (!response.ok) {
+    const detail = (await response.text()).slice(0, 300);
+    return { status: "failed", provider: "meta-whatsapp", reason: "META_SEND_FAILED", detail };
+  }
+
+  const result = (await response.json()) as { messages?: Array<{ id?: string }> };
+  return { status: "sent", provider: "meta-whatsapp", messageId: result.messages?.[0]?.id };
+}
+
+async function sendDirect(payload: SendPayload): Promise<DeliveryOutcome> {
+  if (payload.channel === "web") return sendViaGmail(payload);
+  if (payload.channel === "sms" || payload.channel === "voice") return sendViaPlivo(payload);
+  if (payload.channel === "whatsapp") return sendViaMetaWhatsApp(payload);
+  return { status: "failed", provider: "unknown", reason: "UNSUPPORTED_CHANNEL" };
+}
+
 async function sendViaPubSub(payload: SendPayload): Promise<DeliveryOutcome> {
   const { isGcpConfigured } = await import("@hair-simo/gcp/config");
   if (!isGcpConfigured()) {
@@ -159,7 +227,7 @@ async function sendViaPubSub(payload: SendPayload): Promise<DeliveryOutcome> {
     if (!result.published) {
       return { status: "failed", provider: "gcp-pubsub", reason: "PUBSUB_NOT_PUBLISHED" };
     }
-    return { status: "sent", provider: "gcp-pubsub", messageId: result.messageId };
+    return { status: "scheduled", provider: "gcp-pubsub", messageId: result.messageId };
   } catch (error) {
     console.error("[notification:pubsub-error]", {
       recipient: maskRecipient(payload.recipient),
@@ -394,7 +462,32 @@ async function finalizeNotification(
 export class NotificationService {
   async send(payload: SendPayload): Promise<DeliveryOutcome> {
     if (payload.channel === "web") return sendViaGmail(payload);
+    const { isGcpConfigured } = await import("@hair-simo/gcp/config");
+    if (!isGcpConfigured()) return sendDirect(payload);
     return sendViaPubSub(payload);
+  }
+
+  async deliverPubSubEvent(event: {
+    channel: "email" | "sms" | "whatsapp" | "web";
+    recipient: string;
+    locale?: AppLocale;
+    payload: Record<string, unknown>;
+  }): Promise<DeliveryOutcome> {
+    const message = typeof event.payload.message === "string" ? event.payload.message : "";
+    const subject = typeof event.payload.subject === "string" ? event.payload.subject : DEFAULT_SUBJECT;
+    const channel =
+      event.channel === "email"
+        ? "web"
+        : event.channel === "whatsapp"
+          ? "whatsapp"
+          : "sms";
+    return sendDirect({
+      channel,
+      recipient: event.recipient,
+      subject,
+      message,
+      locale: event.locale ?? "en",
+    });
   }
 
   /**

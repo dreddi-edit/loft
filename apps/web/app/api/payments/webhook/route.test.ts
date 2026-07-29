@@ -15,6 +15,13 @@ const markFailed = vi.fn();
 const createRefund = vi.fn();
 
 vi.mock("@hair-simo/core", () => ({
+  resolveTenantContext: async () => ({
+    tenantId: "cltenant00000000000000001",
+    slug: "hairsimo-brixen",
+    displayName: "Hair Simo",
+    timeZone: "Europe/Rome",
+    defaultLocale: "it",
+  }),
   PaymentService: class {
     confirmPayment = confirmPayment;
     markFailed = markFailed;
@@ -93,9 +100,7 @@ afterEach(() => {
 
 describe("POST /api/payments/webhook transport secret", () => {
   it("rejects a request with no bearer token", async () => {
-    const response = await POST(
-      webhookRequest(SUCCEEDED, { authorization: "" }),
-    );
+    const response = await POST(webhookRequest(SUCCEEDED, { authorization: "" }));
     expect(response.status).toBe(401);
     expect(await response.json()).toMatchObject({
       error: "UNAUTHORIZED",
@@ -187,9 +192,7 @@ describe("POST /api/payments/webhook body signature", () => {
 
   it("rejects a malformed signature header", async () => {
     vi.stubEnv("PAYMENT_WEBHOOK_SIGNING_SECRET", SIGNING_SECRET);
-    const response = await POST(
-      webhookRequest(SUCCEEDED, { "x-payment-signature": "garbage" }),
-    );
+    const response = await POST(webhookRequest(SUCCEEDED, { "x-payment-signature": "garbage" }));
     expect(response.status).toBe(401);
   });
 });

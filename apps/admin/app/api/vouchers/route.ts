@@ -257,8 +257,8 @@ export const POST = adminRoute<z.infer<typeof voucherIssueSchema>>(
       overrideMinimumValidity: body.overrideMinimumValidity,
     });
 
-    // The only time the full code is returned in bulk context: it has to be written onto
-    // the physical card. no-store keeps it out of any intermediary cache.
+    // The one response that hands out a full code unprompted, because it has to be written
+    // onto the physical card. no-store keeps it out of any intermediary cache.
     return NextResponse.json(
       { data: { ...voucher, expiryPolicy: voucherExpiryPolicy() } },
       { status: 201, headers: { "cache-control": "no-store" } },

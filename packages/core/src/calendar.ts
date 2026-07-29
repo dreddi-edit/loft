@@ -926,8 +926,7 @@ export function staffFeedUrl(
 ): string {
   const token = createStaffFeedToken(staffId);
   const normalized = baseUrl.replace(/\/+$/, "");
-  const withScheme =
-    scheme === "webcal" ? normalized.replace(/^https?:/, "webcal:") : normalized;
+  const withScheme = scheme === "webcal" ? normalized.replace(/^https?:/, "webcal:") : normalized;
   return `${withScheme}/api/calendar/staff/${token}.ics`;
 }
 
@@ -1059,15 +1058,19 @@ export async function buildStaffFeedForToken(
   const staff = (await prisma.staffProfile.findUnique({
     where: { id: staffId },
     select: { id: true, displayName: true, locale: true, user: { select: { active: true } } },
-  })) as { id: string; displayName: string; locale: string; user: { active: boolean } | null } | null;
+  })) as {
+    id: string;
+    displayName: string;
+    locale: string;
+    user: { active: boolean } | null;
+  } | null;
 
   if (!staff || !staff.user?.active) throw new Error("STAFF_FEED_NOT_FOUND");
 
   const locale = resolveLocale(options.locale ?? staff.locale);
   const appointments = await loadStaffFeedAppointments(staffId, options.range);
   const calendarName =
-    options.calendarName?.trim() ||
-    `${CALENDAR_STRINGS[locale].feedName} – ${staff.displayName}`;
+    options.calendarName?.trim() || `${CALENDAR_STRINGS[locale].feedName} – ${staff.displayName}`;
   const calendar = buildStaffFeed(appointments, { ...options, locale, calendarName });
 
   return {

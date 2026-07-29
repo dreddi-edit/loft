@@ -65,9 +65,18 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [marketingOptIn, setMarketingOptIn] = useState(false);
   const [manageUrl, setManageUrl] = useState<string | null>(null);
+  const [waitlistJoined, setWaitlistJoined] = useState(false);
+  const [waitlistLatestDay, setWaitlistLatestDay] = useState("");
+  const [voucherCode, setVoucherCode] = useState("");
+  const [voucherBalance, setVoucherBalance] = useState<{
+    remainingCents: number;
+    currency: string;
+    status: string;
+    expiresAt: string | null;
+  } | null>(null);
 
   const step = steps[stepIndex];
-  const checkoutStarted = useRef(false);
+  const lastCheckoutKey = useRef<string | null>(null);
   const selectedService = useMemo(
     () => services.find((entry) => entry.slug === serviceSlug),
     [services, serviceSlug],
@@ -103,13 +112,16 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
 
   useEffect(() => {
     if (step !== "payment") {
-      checkoutStarted.current = false;
+      lastCheckoutKey.current = null;
       return;
     }
-    if (!appointmentId || paymentComplete || paymentId || checkoutStarted.current) return;
-    checkoutStarted.current = true;
+    if (!appointmentId || paymentComplete) return;
+    if (voucherCode.trim() && !voucherBalance) return;
+    const checkoutKey = `${appointmentId}:${paymentMode}:${voucherBalance?.remainingCents ?? "none"}`;
+    if (lastCheckoutKey.current === checkoutKey) return;
+    lastCheckoutKey.current = checkoutKey;
     void createGooglePayCheckout();
-  }, [step, appointmentId, paymentComplete, paymentId, paymentMode]);
+  }, [step, appointmentId, paymentComplete, paymentMode, voucherBalance, voucherCode]);
 
   async function ensureCatalogLoaded() {
     if (services.length > 0) return;
@@ -147,6 +159,61 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
       } else {
         setStartsAt("");
       }
+    } catch (err) {
+      setError(err instanceof Error ? presentError(err.message) : t(locale, "error_generic"));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function joinWaitlist() {
+    if (!selectedService || !email || !termsAccepted) {
+      setError("Bitte Service, E-Mail und Bedingungen ausfuellen.");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const earliestAt = new Date(`${day}T08:00:00`);
+      const latestDay = waitlistLatestDay || day;
+      const latestAt = new Date(`${latestDay}T20:00:00`);
+      const response = await fetch("/api/waitlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          serviceSlug,
+          staffId: staffId || undefined,
+          earliestAt: earliestAt.toISOString(),
+          latestAt: latestAt.toISOString(),
+          customerEmail: email,
+          customerFirstName: firstName || undefined,
+          customerLastName: lastName || undefined,
+          customerPhone: phone || undefined,
+          locale,
+          channel: "web",
+          termsAccepted,
+        }),
+      });
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.message ?? "WAITLIST_JOIN_FAILED");
+      setWaitlistJoined(true);
+    } catch (err) {
+      setError(err instanceof Error ? presentError(err.message) : t(locale, "error_generic"));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function checkVoucherBalance() {
+    if (!voucherCode.trim()) return;
+    setLoading(true);
+    setError(null);
+    setVoucherBalance(null);
+    try {
+      const response = await fetch(`/api/vouchers/balance?code=${encodeURIComponent(voucherCode.trim())}`);
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.message ?? "VOUCHER_LOOKUP_FAILED");
+      setVoucherBalance(json.data ?? null);
     } catch (err) {
       setError(err instanceof Error ? presentError(err.message) : t(locale, "error_generic"));
     } finally {
@@ -197,14 +264,19 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           appointmentId,
-          serviceSlug,
           mode: paymentMode,
+          ...(voucherBalance ? { voucherCode: voucherCode.trim() } : {}),
         }),
       });
       const json = await response.json();
       if (!response.ok) throw new Error(json.message ?? "PAYMENT_CHECKOUT_FAILED");
-      setPaymentId(json.data.paymentId);
-      setAmountCents(json.data.amountCents);
+      if (json.data.paymentRequired) {
+        setPaymentId(json.data.paymentId);
+      } else {
+        setPaymentId(null);
+        setPaymentComplete(true);
+      }
+      setAmountCents(json.data.totalChargeCents);
     } catch (err) {
       setError(err instanceof Error ? presentError(err.message) : t(locale, "error_generic"));
     } finally {
@@ -248,6 +320,10 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
     }
     if (step === "datetime") {
       if (!startsAt) {
+        if (slots.length === 0) {
+          setStepIndex(3);
+          return;
+        }
         setError("Bitte waehle einen verfuegbaren Termin.");
         return;
       }
@@ -255,6 +331,10 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
       return;
     }
     if (step === "details") {
+      if (!startsAt) {
+        await joinWaitlist();
+        return;
+      }
       await createBooking();
     }
   }
@@ -323,6 +403,12 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
                 </button>
               ))}
             </div>
+            {!loading && slots.length === 0 ? (
+              <div style={{ gridColumn: "1 / -1", padding: "1rem", border: "1px solid var(--hs-border)", borderRadius: "12px" }}>
+                <p style={{ marginTop: 0 }}>Keine freien Termine an diesem Tag. Trag dich in die Warteliste ein.</p>
+                <p style={{ color: "var(--hs-muted)" }}>Du kannst im naechsten Schritt deine Kontaktdaten eingeben und dich benachrichtigen lassen.</p>
+              </div>
+            ) : null}
             <p style={{ color: "var(--hs-muted)", gridColumn: "1 / -1", margin: 0 }}>
               {timeZoneNotice[locale]}
             </p>
@@ -335,6 +421,16 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
             <Input label="Phone" value={phone} onChange={(event) => setPhone(event.target.value)} />
             <Input label="First name" value={firstName} onChange={(event) => setFirstName(event.target.value)} />
             <Input label="Last name" value={lastName} onChange={(event) => setLastName(event.target.value)} />
+            {!startsAt ? (
+              <div style={{ gridColumn: "1 / -1" }}>
+                <Input
+                  label="Warteliste bis (Tag)"
+                  type="date"
+                  value={waitlistLatestDay}
+                  onChange={(event) => setWaitlistLatestDay(event.target.value)}
+                />
+              </div>
+            ) : null}
             <label style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start", gridColumn: "1 / -1" }}>
               <input type="checkbox" checked={termsAccepted} onChange={(event) => setTermsAccepted(event.target.checked)} required />
               <span>{t(locale, "booking_terms")}</span>
@@ -343,6 +439,11 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
               <input type="checkbox" checked={marketingOptIn} onChange={(event) => setMarketingOptIn(event.target.checked)} />
               <span>{t(locale, "booking_marketing")}</span>
             </label>
+            {waitlistJoined ? (
+              <p style={{ color: "var(--hs-success)", gridColumn: "1 / -1" }}>
+                Du stehst auf der Warteliste. Wir melden uns per E-Mail, sobald ein Termin frei wird.
+              </p>
+            ) : null}
           </div>
         ) : null}
 
@@ -365,10 +466,41 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
                     <a href={manageUrl}>{t(locale, "booking_manage_link")}</a>
                   </p>
                 ) : null}
-                <Select label={t(locale, "booking_step_payment")} value={paymentMode} onChange={(event) => setPaymentMode(event.target.value as "deposit" | "full")}>
+                <Select
+                  label={t(locale, "booking_step_payment")}
+                  value={paymentMode}
+                  onChange={(event) => {
+                    setPaymentMode(event.target.value as "deposit" | "full");
+                    setPaymentId(null);
+                    lastCheckoutKey.current = null;
+                  }}
+                >
                   <option value="deposit">Deposit (30%)</option>
                   <option value="full">Full payment</option>
                 </Select>
+                <div className="hs-grid hs-grid-2" style={{ gridColumn: "1 / -1" }}>
+                  <Input
+                    label="Gutscheincode"
+                    value={voucherCode}
+                    onChange={(event) => {
+                      setVoucherCode(event.target.value);
+                      setVoucherBalance(null);
+                      setPaymentId(null);
+                      lastCheckoutKey.current = null;
+                    }}
+                  />
+                  <div style={{ display: "flex", alignItems: "flex-end" }}>
+                    <Button type="button" variant="secondary" onClick={() => void checkVoucherBalance()} disabled={loading || !voucherCode.trim()}>
+                      Guthaben pruefen
+                    </Button>
+                  </div>
+                </div>
+                {voucherBalance ? (
+                  <p style={{ color: "var(--hs-muted)", gridColumn: "1 / -1" }}>
+                    Gutschein-Guthaben: {(voucherBalance.remainingCents / 100).toFixed(2)} {voucherBalance.currency}
+                    {voucherBalance.expiresAt ? ` · gueltig bis ${new Date(voucherBalance.expiresAt).toLocaleDateString()}` : ""}
+                  </p>
+                ) : null}
                 {amountCents !== null ? (
                   <p style={{ color: "var(--hs-muted)" }}>
                     {t(locale, "payment_amount")}: {(amountCents / 100).toFixed(2)} EUR
@@ -386,7 +518,9 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
                 {showGooglePayHint ? (
                   <p style={{ color: "var(--hs-muted)" }}>{t(locale, "payment_google_pay")} — SDK ready after merchant setup</p>
                 ) : null}
-                {!paymentId && loading ? <p style={{ color: "var(--hs-muted)" }}>{t(locale, "payment_checkout")}…</p> : null}
+                {!paymentId && !paymentComplete && loading ? (
+                  <p style={{ color: "var(--hs-muted)" }}>{t(locale, "payment_checkout")}…</p>
+                ) : null}
               </>
             )}
           </div>
@@ -401,8 +535,8 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
             </Button>
           ) : null}
           {step !== "payment" ? (
-            <Button type="button" onClick={() => void nextStep()} disabled={loading || (step === "details" && !termsAccepted)}>
-              {loading ? t(locale, "loading") : t(locale, "submit")}
+            <Button type="button" onClick={() => void nextStep()} disabled={loading || (step === "details" && !termsAccepted) || (step === "details" && !startsAt && waitlistJoined)}>
+              {loading ? t(locale, "loading") : !startsAt && step === "details" ? "Auf Warteliste" : t(locale, "submit")}
             </Button>
           ) : null}
         </div>

@@ -172,7 +172,7 @@ Dem Agent die Ausgabe von `gcloud auth list` und `gcloud config get-value projec
 ```bash
 gcloud services enable \
   run.googleapis.com \
-  alloydb.googleapis.com \
+  sqladmin.googleapis.com \
   secretmanager.googleapis.com \
   pubsub.googleapis.com \
   cloudtasks.googleapis.com \
@@ -199,12 +199,12 @@ cp terraform.tfvars.example terraform.tfvars
 `terraform.tfvars` bearbeiten:
 
 ```hcl
-project_id       = "dein-gcp-project-id"
-region           = "europe-west6"
-environment      = "staging"          # erst staging!
-web_domain       = "staging.deine-domain.ch"
-admin_domain     = "admin-staging.deine-domain.ch"
-alloydb_password = "STARKES_PASSWORT"
+project_id  = "dein-gcp-project-id"
+region      = "europe-west8"          # Milan — nicht mehr europe-west6 (Zürich)
+environment = "staging"               # erst staging!
+web_domain   = "staging.deine-domain.it"
+admin_domain = "admin-staging.deine-domain.it"
+db_password  = "STARKES_PASSWORT"     # heißt seit dem Cloud-SQL-Wechsel db_password, nicht mehr alloydb_password
 ```
 
 Dann:
@@ -222,7 +222,7 @@ terraform plan    # erst plan — Agent soll Output erklären
 ```bash
 # Region + Project aus terraform.tfvars
 export PROJECT_ID=dein-gcp-project-id
-export REGION=europe-west6
+export REGION=europe-west8
 
 gcloud auth configure-docker ${REGION}-docker.pkg.dev
 
@@ -243,8 +243,8 @@ Mindestens setzen wenn GCP aktiv:
 
 ```env
 GCP_PROJECT_ID=dein-gcp-project-id
-GCP_REGION=europe-west6
-DATABASE_URL=postgresql://...   # aus Terraform output / AlloyDB
+GCP_REGION=europe-west8
+DATABASE_URL=postgresql://...   # aus Terraform output / Cloud SQL for PostgreSQL 16
 JWT_SECRET=...
 GCP_CLOUD_TASKS_HANDLER_URL=https://<web-url>/api/tasks/notification
 GCP_CLOUD_TASKS_SECRET=...
@@ -279,12 +279,12 @@ NEXT_PUBLIC_BASE_URL=https://<web-url>
 - [ ] Docker images gebaut + gepusht
 - [ ] Cloud Run Services laufen
 - [ ] `DATABASE_URL` + Secrets gesetzt
-- [ ] DB seed/migrate auf AlloyDB
+- [ ] DB seed/migrate auf Cloud SQL for PostgreSQL 16
 
 ### Phase F — Services anbinden (einzeln)
 - [ ] Vertex AI Gemini (Chat)
 - [ ] Gmail API (E-Mails)
-- [ ] Cloud Scheduler → `/api/cron/reminders`
+- [ ] Cloud Scheduler → `/api/cron/reminders` und `/api/cron/sweep`
 - [ ] Dialogflow CX (Voice) — später
 - [ ] Google Pay + PSP — später
 - [ ] Identity Platform (Admin Auth) — später

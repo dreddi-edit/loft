@@ -317,7 +317,23 @@ const { db, notificationSend } = vi.hoisted(() => {
   };
 });
 
-vi.mock("@hair-simo/db", () => ({ prisma: db.prisma }));
+vi.mock("@hair-simo/db", () => ({
+
+  DEFAULT_TENANT_ID: "cltenant00000000000000001",
+  DEFAULT_TENANT_SLUG: "hairsimo-brixen",
+  currentTenantId: () => "cltenant00000000000000001",
+  tenantEmailKey: (email: string) => ({ tenantId_email: { tenantId: "cltenant00000000000000001", email } }),
+  tenantPhoneKey: (phone: string) => ({ tenantId_phone: { tenantId: "cltenant00000000000000001", phone } }),
+  tenantSlugKey: (slug: string) => ({ tenantId_slug: { tenantId: "cltenant00000000000000001", slug } }),
+  tenantSkuKey: (sku: string) => ({ tenantId_sku: { tenantId: "cltenant00000000000000001", sku } }),
+  tenantCodeKey: (code: string) => ({ tenantId_code: { tenantId: "cltenant00000000000000001", code } }),
+  tenantDayOfWeekKey: (dayOfWeek: number) => ({ tenantId_dayOfWeek: { tenantId: "cltenant00000000000000001", dayOfWeek } }),
+  getTenantContext: () => undefined,
+  forEachActiveTenant: async (work: (ctx: { tenantId: string; slug: string }) => Promise<void>) => {
+    await work({ tenantId: "cltenant00000000000000001", slug: "hairsimo-brixen" });
+    return { tenantCount: 1 };
+  },
+ prisma: db.prisma }));
 
 vi.mock("./notification-service", () => ({
   NotificationService: vi.fn(() => ({ send: notificationSend })),
@@ -758,9 +774,9 @@ describe("join: references", () => {
     await expect(service().join(joinInput({ customerId: "nobody" }), NOW)).rejects.toThrow(
       "CUSTOMER_NOT_FOUND",
     );
-    await expect(
-      service().join(joinInput({ customerId: "customer-erased" }), NOW),
-    ).rejects.toThrow("CUSTOMER_NOT_FOUND");
+    await expect(service().join(joinInput({ customerId: "customer-erased" }), NOW)).rejects.toThrow(
+      "CUSTOMER_NOT_FOUND",
+    );
     await expect(
       service().join(joinInput({ customerId: "customer-anonymous" }), NOW),
     ).rejects.toThrow("CUSTOMER_NOT_FOUND");
@@ -770,9 +786,9 @@ describe("join: references", () => {
     await expect(service().join(joinInput({ serviceId: "nope" }), NOW)).rejects.toThrow(
       "SERVICE_NOT_FOUND",
     );
-    await expect(
-      service().join(joinInput({ serviceId: "service-retired" }), NOW),
-    ).rejects.toThrow("SERVICE_INACTIVE");
+    await expect(service().join(joinInput({ serviceId: "service-retired" }), NOW)).rejects.toThrow(
+      "SERVICE_INACTIVE",
+    );
   });
 
   it("refuses a staff preference the salon cannot honour", async () => {
@@ -866,7 +882,7 @@ describe("join: deduplication and the per-customer cap", () => {
     expect(db.waitlists).toHaveLength(MAX_OPEN_WAITLIST_ENTRIES_PER_CUSTOMER);
   });
 
-  it("returns the entry that already has a live offer rather than minting a fresh one", async () => {
+  it("returns the entry that already holds a live offer", async () => {
     seedEntry();
     const offer = (await service().notifyMatches(SLOT, { now: NOW, limit: 1 })).offers[0];
 
@@ -928,7 +944,10 @@ describe("join: deduplication and the per-customer cap", () => {
 
 describe("join: the customer who is already booked", () => {
   it("reports the appointments already held inside the window and joins anyway", async () => {
-    const inside = seedAppointment({ id: "held-inside", startsAt: new Date(WINDOW_FROM.getTime() + HOUR) });
+    const inside = seedAppointment({
+      id: "held-inside",
+      startsAt: new Date(WINDOW_FROM.getTime() + HOUR),
+    });
     seedAppointment({
       id: "held-outside",
       startsAt: new Date(WINDOW_TO.getTime() + HOUR),
@@ -1056,12 +1075,12 @@ describe("findMatches: window fit", () => {
     await expect(service().findMatches({ ...SLOT, serviceId: "nope" })).rejects.toThrow(
       "SERVICE_NOT_FOUND",
     );
-    await expect(
-      service().findMatches({ ...SLOT, serviceId: "service-retired" }),
-    ).rejects.toThrow("SERVICE_INACTIVE");
-    await expect(
-      service().findMatches({ ...SLOT, staffId: "" } as FreedSlot),
-    ).rejects.toThrow("INVALID_INPUT");
+    await expect(service().findMatches({ ...SLOT, serviceId: "service-retired" })).rejects.toThrow(
+      "SERVICE_INACTIVE",
+    );
+    await expect(service().findMatches({ ...SLOT, staffId: "" } as FreedSlot)).rejects.toThrow(
+      "INVALID_INPUT",
+    );
   });
 });
 
@@ -1516,9 +1535,9 @@ describe("claim: the race for one chair", () => {
 
     expect(results.filter((result) => result.won)).toHaveLength(1);
     expect(db.appointments).toHaveLength(1);
-    expect(
-      results.filter((result) => !result.won && result.reason === "SLOT_TAKEN"),
-    ).toHaveLength(4);
+    expect(results.filter((result) => !result.won && result.reason === "SLOT_TAKEN")).toHaveLength(
+      4,
+    );
   });
 
   it("loses to a walk-in booked through the normal flow a moment earlier", async () => {
@@ -1558,9 +1577,9 @@ describe("claim: the race for one chair", () => {
       throw new Error("connection reset");
     });
 
-    await expect(
-      service().claim(offer.entryId, { token: offer.token, now: NOW }),
-    ).rejects.toThrow("connection reset");
+    await expect(service().claim(offer.entryId, { token: offer.token, now: NOW })).rejects.toThrow(
+      "connection reset",
+    );
     expect(db.appointments).toHaveLength(0);
   });
 
@@ -1590,9 +1609,9 @@ describe("claim: refusing a bad link", () => {
     await expect(service().claim(offer.entryId, { token: "nonsense", now: NOW })).rejects.toThrow(
       "OFFER_TOKEN_INVALID",
     );
-    await expect(service().claim(other.id as string, { token: offer.token, now: NOW })).rejects.toThrow(
-      "OFFER_TOKEN_INVALID",
-    );
+    await expect(
+      service().claim(other.id as string, { token: offer.token, now: NOW }),
+    ).rejects.toThrow("OFFER_TOKEN_INVALID");
     await expect(
       service().claim("entry-missing", {
         token: createWaitlistOfferToken({
@@ -1738,7 +1757,11 @@ describe("expire", () => {
   });
 
   it("expires closed windows, cancels erased customers and leaves the rest alone", async () => {
-    seedEntry({ id: "lapsed", status: "notified", notifiedAt: new Date(NOW.getTime() - 2 * TTL_MS) });
+    seedEntry({
+      id: "lapsed",
+      status: "notified",
+      notifiedAt: new Date(NOW.getTime() - 2 * TTL_MS),
+    });
     seedEntry({ id: "closed", latestAt: new Date(NOW.getTime() - MINUTE) });
     seedEntry({ id: "erased", customerId: "customer-erased" });
     seedEntry({ id: "anonymous", customerId: "customer-anonymous" });
@@ -1776,7 +1799,11 @@ describe("expire", () => {
   });
 
   it("counts every row once when two cron runs overlap", async () => {
-    seedEntry({ id: "lapsed", status: "notified", notifiedAt: new Date(NOW.getTime() - 2 * TTL_MS) });
+    seedEntry({
+      id: "lapsed",
+      status: "notified",
+      notifiedAt: new Date(NOW.getTime() - 2 * TTL_MS),
+    });
     seedEntry({ id: "closed", latestAt: new Date(NOW.getTime() - MINUTE) });
     seedEntry({ id: "erased", customerId: "customer-erased" });
 

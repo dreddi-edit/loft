@@ -141,28 +141,21 @@ export default function VerifyBookingPage({
   const { locale: localeInput, token } = use(params);
   const locale = resolveLocale(localeInput);
   const [state, setState] = useState<VerifyState>("loading");
-  // React strict mode mounts the component twice in development. Without this the second
-  // run would redeem again and turn a fresh "confirmed" into "already confirmed".
+  // React strict mode mounts the component twice in development, and the redemption is not
+  // a repeatable read: a second call turns a fresh "confirmed" into "already confirmed".
   const requested = useRef<string | null>(null);
 
   useEffect(() => {
     if (requested.current === token) return;
     requested.current = token;
 
-    let active = true;
+    // Deliberately no cancellation flag. The strict-mode remount reuses the first request
+    // rather than starting a second one, so a cleanup that disarmed it would leave the page
+    // stuck on "loading"; a late setState after a real unmount is a no-op in React 18+.
     void fetch(`/api/verify/${encodeURIComponent(token)}`, { cache: "no-store" })
       .then((response) => (response.ok ? (response.json() as Promise<unknown>) : null))
-      .then((payload) => {
-        if (!active) return;
-        setState(readStatus(payload) ?? "error");
-      })
-      .catch(() => {
-        if (active) setState("error");
-      });
-
-    return () => {
-      active = false;
-    };
+      .then((payload) => setState(readStatus(payload) ?? "error"))
+      .catch(() => setState("error"));
   }, [token]);
 
   const copy =

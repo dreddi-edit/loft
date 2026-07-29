@@ -8,6 +8,24 @@ const { findUnique, verifyIdToken } = vi.hoisted(() => ({
 
 vi.mock("@hair-simo/db", () => ({
   prisma: { user: { findUnique } },
+  DEFAULT_TENANT_ID: "cltenant00000000000000001",
+  DEFAULT_TENANT_SLUG: "hairsimo-brixen",
+  currentTenantId: () => "cltenant00000000000000001",
+  tenantEmailKey: (email: string) => ({
+    tenantId_email: { tenantId: "cltenant00000000000000001", email },
+  }),
+  tenantPhoneKey: (phone: string) => ({ tenantId_phone: { tenantId: "cltenant00000000000000001", phone } }),
+  tenantSlugKey: (slug: string) => ({ tenantId_slug: { tenantId: "cltenant00000000000000001", slug } }),
+  tenantSkuKey: (sku: string) => ({ tenantId_sku: { tenantId: "cltenant00000000000000001", sku } }),
+  tenantCodeKey: (code: string) => ({ tenantId_code: { tenantId: "cltenant00000000000000001", code } }),
+  tenantDayOfWeekKey: (dayOfWeek: number) => ({
+    tenantId_dayOfWeek: { tenantId: "cltenant00000000000000001", dayOfWeek },
+  }),
+  getTenantContext: () => undefined,
+  forEachActiveTenant: async (work: (ctx: { tenantId: string; slug: string }) => Promise<void>) => {
+    await work({ tenantId: "cltenant00000000000000001", slug: "hairsimo-brixen" });
+    return { tenantCount: 1 };
+  },
 }));
 
 vi.mock("@hair-simo/gcp/identity-platform", () => ({
@@ -49,6 +67,8 @@ function dbUser(overrides: Record<string, unknown> = {}) {
     lastName: "Bianchi",
     active: true,
     updatedAt,
+    tenantId: "cltenant00000000000000001",
+    tenant: { slug: "hairsimo-brixen" },
     roles: [{ role: { key: "owner" } }],
     ...overrides,
   };
@@ -133,6 +153,8 @@ describe("admin session tokens", () => {
       role: "superuser",
       firstName: "Simona",
       lastName: "Bianchi",
+      tenantId: "cltenant00000000000000001",
+      tenantSlug: "hairsimo-brixen",
       tokenVersion: String(updatedAt.getTime()),
     })
       .setProtectedHeader({ alg: "HS256", typ: "JWT" })
@@ -157,6 +179,8 @@ describe("admin session tokens", () => {
       role: "owner",
       firstName: "Simona",
       lastName: "Bianchi",
+      tenantId: "cltenant00000000000000001",
+      tenantSlug: "hairsimo-brixen",
       tokenVersion: String(updatedAt.getTime()),
     })
       .setProtectedHeader({ alg: "HS256", typ: "JWT" })

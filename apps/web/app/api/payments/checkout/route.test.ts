@@ -11,6 +11,13 @@ import {
 const createCheckout = vi.fn();
 
 vi.mock("@hair-simo/core", () => ({
+  resolveTenantContext: async () => ({
+    tenantId: "cltenant00000000000000001",
+    slug: "hairsimo-brixen",
+    displayName: "Hair Simo",
+    timeZone: "Europe/Rome",
+    defaultLocale: "it",
+  }),
   PaymentService: class {
     createCheckout = createCheckout;
   },
@@ -80,6 +87,27 @@ describe("POST /api/payments/checkout", () => {
     expect(encoded).not.toContain("internalMargin");
     expect(encoded).not.toContain("anna@example.com");
     expect(encoded).not.toContain("providerConfigured");
+  });
+
+  it("forwards an optional verified voucher code to checkout", async () => {
+    await POST(
+      jsonRequest({
+        appointmentId: "apt_1",
+        voucherCode: "3479-ABCD-FGHJ",
+      }),
+    );
+
+    expect(createCheckout.mock.calls[0][0]).toEqual({
+      appointmentId: "apt_1",
+      mode: "deposit",
+      voucherCode: "3479-ABCD-FGHJ",
+    });
+  });
+
+  it("returns 400 for a malformed voucher code field", async () => {
+    const response = await POST(jsonRequest({ appointmentId: "apt_1", voucherCode: "" }));
+    expect(response.status).toBe(400);
+    expect(createCheckout).not.toHaveBeenCalled();
   });
 
   it("drops the client-supplied amount so a cheap deposit cannot settle an expensive visit", async () => {

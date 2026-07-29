@@ -17,6 +17,13 @@ const sendBookingConfirmation = vi.fn();
 const createAppointmentAccessToken = vi.fn();
 
 vi.mock("@hair-simo/core", () => ({
+  resolveTenantContext: async () => ({
+    tenantId: "cltenant00000000000000001",
+    slug: "hairsimo-brixen",
+    displayName: "Hair Simo",
+    timeZone: "Europe/Rome",
+    defaultLocale: "it",
+  }),
   BookingService: class {
     createBooking = createBooking;
   },
@@ -235,17 +242,16 @@ describe("POST /api/booking", () => {
 });
 
 describe("routes deleted by the security audit stay deleted", () => {
-  it.each([
-    "booking/[id]/cancel",
-    "booking/[id]/reschedule",
-    "notifications/reminder",
-  ])("has no module at /api/%s", (route) => {
-    const dir = path.join(API_DIR, ...route.split("/"));
-    expect(existsSync(dir)).toBe(false);
-    for (const extension of ["ts", "tsx", "js", "jsx"]) {
-      expect(existsSync(path.join(dir, `route.${extension}`))).toBe(false);
-    }
-  });
+  it.each(["booking/[id]/cancel", "booking/[id]/reschedule", "notifications/reminder"])(
+    "has no module at /api/%s",
+    (route) => {
+      const dir = path.join(API_DIR, ...route.split("/"));
+      expect(existsSync(dir)).toBe(false);
+      for (const extension of ["ts", "tsx", "js", "jsx"]) {
+        expect(existsSync(path.join(dir, `route.${extension}`))).toBe(false);
+      }
+    },
+  );
 
   it("keeps every appointment mutation behind the token route", () => {
     expect(existsSync(path.join(API_DIR, "appointment", "[token]", "route.ts"))).toBe(true);

@@ -495,7 +495,10 @@ export interface BookingBackend {
   /** Salon day plus salon wall clock -> the ISO instant it denotes. Throws if invalid. */
   resolveInstant(dayKey: string, clock: string): string;
   verifyAccessToken(token: string): Promise<{ appointmentId: string; customerId: string }>;
-  findAppointment(appointmentId: string, locale: SupportedLocale): Promise<AppointmentSummary | null>;
+  findAppointment(
+    appointmentId: string,
+    locale: SupportedLocale,
+  ): Promise<AppointmentSummary | null>;
   createBooking(input: CreateBookingInput): Promise<AppointmentSummary>;
   rescheduleAppointment(
     appointmentId: string,
@@ -736,7 +739,8 @@ const TOOL_COPY: Record<SupportedLocale, ToolCopy> = {
       `Bitte pruefe: ${input.service} am ${input.when} fuer ${input.name}, E-Mail ${input.email}${input.phone ? `, Telefon ${input.phone}` : ""}${input.note ? `, Notiz: ${input.note}` : ""}. Gesamt ${input.total} EUR, Anzahlung ${input.deposit} EUR.`,
     confirmPrompt: (code) =>
       `Wenn das stimmt, antworte mit Ja - ich buche dann verbindlich mit dem Bestaetigungscode ${code} und speichere deine Zustimmung zu den AGB.`,
-    needDraft: "Ich habe noch keine vollstaendige Buchung offen. Nenne mir Leistung, Termin, Name und E-Mail.",
+    needDraft:
+      "Ich habe noch keine vollstaendige Buchung offen. Nenne mir Leistung, Termin, Name und E-Mail.",
     needConfirmation:
       "Diesen Bestaetigungscode habe ich nicht vergeben. Ich lese dir die Buchung noch einmal vor, danach bestaetige bitte.",
     confirmationStale:
@@ -807,8 +811,7 @@ const TOOL_COPY: Record<SupportedLocale, ToolCopy> = {
       "Non ho una prenotazione completa in corso. Dimmi servizio, data e ora, nome ed e-mail.",
     needConfirmation:
       "Questo codice di conferma non l'ho emesso io. Ti rileggo la prenotazione, poi conferma.",
-    confirmationStale:
-      "La conferma e scaduta. Ti rileggo la prenotazione, poi conferma di nuovo.",
+    confirmationStale: "La conferma e scaduta. Ti rileggo la prenotazione, poi conferma di nuovo.",
     priceChanged:
       "Prezzo o acconto sono cambiati. Ti leggo la prenotazione aggiornata, poi conferma di nuovo.",
     slotTaken: (bookingHref) =>
@@ -829,8 +832,7 @@ const TOOL_COPY: Record<SupportedLocale, ToolCopy> = {
     rescheduleNeedsTime: "Dimmi il nuovo giorno e il nuovo orario.",
     rescheduled: (service, when) => `Spostato: ${service} ora il ${when}.`,
     cancelled: (service, when) => `Annullato: ${service} del ${when}.`,
-    rateLimited:
-      "Troppe modifiche in poco tempo. Riprova tra qualche minuto oppure chiamaci.",
+    rateLimited: "Troppe modifiche in poco tempo. Riprova tra qualche minuto oppure chiamaci.",
     invalidArguments: "Non ho capito bene. Puoi ripetermelo?",
     backendUnavailable: "Il sistema non risponde in questo momento. Riprova tra poco.",
     unknownTool: "Questo qui non posso farlo.",
@@ -1008,7 +1010,8 @@ function randomConfirmationCode(): string {
 function safeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
   let diff = 0;
-  for (let index = 0; index < a.length; index += 1) diff |= a.charCodeAt(index) ^ b.charCodeAt(index);
+  for (let index = 0; index < a.length; index += 1)
+    diff |= a.charCodeAt(index) ^ b.charCodeAt(index);
   return diff === 0;
 }
 
@@ -1451,18 +1454,14 @@ export function createBookingToolset(options: BookingToolsetOptions): Toolset {
       }
 
       const issued = await issueConfirmation(draft, service);
-      return ok(
-        "collectBookingDetails",
-        `${issued.readBack} ${copy.confirmPrompt(issued.code)}`,
-        {
-          status: "ready",
-          readBack: issued.readBack,
-          confirmationCode: issued.code,
-          totalCents: service.totalCents,
-          depositCents: service.depositCents,
-          depositRequired: service.depositRequired,
-        },
-      );
+      return ok("collectBookingDetails", `${issued.readBack} ${copy.confirmPrompt(issued.code)}`, {
+        status: "ready",
+        readBack: issued.readBack,
+        confirmationCode: issued.code,
+        totalCents: service.totalCents,
+        depositCents: service.depositCents,
+        depositRequired: service.depositRequired,
+      });
     },
 
     confirmBooking: async (args) => {

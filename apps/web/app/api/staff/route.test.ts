@@ -7,6 +7,13 @@ import { RATE_LIMIT_POLICIES, effectiveLimit, resetRateLimitStore } from "../../
 const listStaff = vi.fn();
 
 vi.mock("@hair-simo/core", () => ({
+  resolveTenantContext: async () => ({
+    tenantId: "cltenant00000000000000001",
+    slug: "hairsimo-brixen",
+    displayName: "Hair Simo",
+    timeZone: "Europe/Rome",
+    defaultLocale: "it",
+  }),
   salonRepository: { listStaff: (...args: unknown[]) => listStaff(...args) },
 }));
 
@@ -78,7 +85,9 @@ describe("GET /api/staff", () => {
   });
 
   it("never leaks a repository failure to the client", async () => {
-    listStaff.mockRejectedValue(new Error("connect ECONNREFUSED 10.8.0.3:5432 at /app/node_modules"));
+    listStaff.mockRejectedValue(
+      new Error("connect ECONNREFUSED 10.8.0.3:5432 at /app/node_modules"),
+    );
 
     const response = await GET(request());
     const body = await response.json();

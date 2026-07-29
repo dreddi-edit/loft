@@ -11,6 +11,13 @@ vi.mock("@hair-simo/core", async () => {
   const time = await vi.importActual<typeof import("@hair-simo/core/time")>("@hair-simo/core/time");
   return {
     ...time,
+    resolveTenantContext: async () => ({
+      tenantId: "cltenant00000000000000001",
+      slug: "hairsimo-brixen",
+      displayName: "Hair Simo",
+      timeZone: "Europe/Rome",
+      defaultLocale: "it",
+    }),
     BookingService: class {
       getAvailability = getAvailability;
     },

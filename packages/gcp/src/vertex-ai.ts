@@ -13,7 +13,7 @@ export type GeminiResult = {
   toolCalls: GeminiToolCall[];
 };
 
-const functionDeclarations = [
+const legacyFunctionDeclarations = [
   {
     name: "checkAvailability",
     description: "Check available appointment slots for a service",
@@ -90,6 +90,16 @@ type GeminiResponse = {
   }>;
 };
 
+type GeminiFunctionDeclaration = {
+  name: string;
+  description: string;
+  parameters: {
+    type: string;
+    properties: Record<string, { type: string; description?: string }>;
+    required?: string[];
+  };
+};
+
 async function callGemini(input: {
   model: string;
   projectId: string;
@@ -97,6 +107,7 @@ async function callGemini(input: {
   systemPrompt?: string;
   contents: Array<{ role: string; parts: Array<{ text: string }> }>;
   tools?: boolean;
+  functionDeclarations?: GeminiFunctionDeclaration[];
 }) {
   const token = await getGcpAccessToken();
   const url = `https://${input.location}-aiplatform.googleapis.com/v1/projects/${input.projectId}/locations/${input.location}/publishers/google/models/${input.model}:generateContent`;
@@ -110,7 +121,8 @@ async function callGemini(input: {
   }
 
   if (input.tools) {
-    body.tools = [{ functionDeclarations }];
+    const declarations = input.functionDeclarations ?? legacyFunctionDeclarations;
+    body.tools = [{ functionDeclarations: declarations }];
   }
 
   const response = await fetch(url, {
@@ -158,6 +170,7 @@ export async function runGeminiAssistant(input: {
   locale?: "de" | "it" | "fr" | "en";
   systemPrompt: string;
   conversationHistory?: Array<{ role: "user" | "model"; text: string }>;
+  functionDeclarations?: GeminiFunctionDeclaration[];
 }): Promise<GeminiResult> {
   const locale = input.locale ?? detectLocaleFromText(input.text);
 
@@ -183,6 +196,7 @@ export async function runGeminiAssistant(input: {
     systemPrompt: input.systemPrompt,
     contents: [...history, { role: "user", parts: [{ text: input.text }] }],
     tools: true,
+    functionDeclarations: input.functionDeclarations,
   });
 
   return parseGeminiResponse(response, locale);

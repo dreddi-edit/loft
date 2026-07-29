@@ -52,6 +52,17 @@ function noSuchVoucher(error: Error): HttpError {
   });
 }
 
+async function lookupBalance(code: string) {
+  try {
+    return await voucherService.balance(code);
+  } catch (error) {
+    if (error instanceof Error && INDISTINGUISHABLE_FAILURES.has(error.message)) {
+      throw noSuchVoucher(error);
+    }
+    throw error;
+  }
+}
+
 export const GET = apiRoute<unknown, z.infer<typeof querySchema>>(
   {
     route: "/api/vouchers/balance",
@@ -61,15 +72,7 @@ export const GET = apiRoute<unknown, z.infer<typeof querySchema>>(
     query: querySchema,
   },
   async ({ query }) => {
-    let balance;
-    try {
-      balance = await voucherService.balance(query.code);
-    } catch (error) {
-      if (error instanceof Error && INDISTINGUISHABLE_FAILURES.has(error.message)) {
-        throw noSuchVoucher(error);
-      }
-      throw error;
-    }
+    const balance = await lookupBalance(query.code);
 
     // Deliberately not the whole VoucherBalance: `code` and `displayCode` would put the
     // credential back into a response that proxies and browsers may cache, and

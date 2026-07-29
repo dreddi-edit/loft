@@ -176,8 +176,8 @@ mutating call — see "Admin audit log" below.
    transaction before sending, so two overlapping cron runs cannot both send the same
    reminder.
 2. E-mail goes via the Gmail API (`GCP_GMAIL_SENDER`); SMS/WhatsApp are published to
-   Pub/Sub for a partner integration to pick up — **the publish is where this platform's
-   own responsibility ends today; see "Known gaps".**
+   Pub/Sub and delivered by `POST /api/tasks/pubsub` when a push subscription is configured
+   — see "Known gaps" for what still needs infra outside this repo.
 3. Delivery status (`sent`/`simulated`/`scheduled`/`failed`/`skipped`) is recorded on
    `NotificationLog`, and `simulated` (nothing left the process, used outside production)
    is deliberately never confused with `sent`.
@@ -219,7 +219,7 @@ mutating call — see "Admin audit log" below.
    web booking for the same slot can never both win.
 4. `WaitlistService.expire` is the housekeeping sweep (lapsed offers back to `active`,
    past-window entries to `expired`, entries for GDPR-erased customers to `cancelled`) —
-   **not yet wired into `/api/cron/sweep`**, see "Known gaps".
+   wired into `POST /api/cron/sweep` as `waitlist-expire`.
 5. Admin: `GET /api/waitlist` (list, fairness order) and
    `PATCH`/`DELETE /api/waitlist/[id]` (cancel/expire one entry; a converted entry is
    permanent).
@@ -237,10 +237,10 @@ mutating call — see "Admin audit log" below.
 3. `GET /api/vouchers/balance` is the public bearer-code balance lookup (throttled under
    its own rate-limit namespace, malformed/unknown codes indistinguishable). Admin:
    `GET`/`POST /api/vouchers` (list, `?view=liability` outstanding-balance report, issue —
-   only `owner` may override the minimum validity floor).
-4. **Redeeming a voucher against a live checkout is not wired into
-   `POST /api/payments/checkout` yet** — the service and its admin-facing issuance/lookup
-   routes exist; the customer-facing "pay with this voucher" step does not.
+   only `owner` may override the minimum validity floor), `POST /api/vouchers/redeem`.
+4. Customer checkout can redeem a voucher via optional `voucherCode` on
+   `POST /api/payments/checkout` (`PaymentService` calls `VoucherService.redeem`).
+   Admin redemption and balance lookup remain available for till/back-office use.
 
 ### Recurring series
 `RecurringService.materialiseDue` is a scheduler: it walks every active series whose
@@ -248,16 +248,16 @@ mutating call — see "Admin audit log" below.
 weekday and wall-clock time, tolerant of a staff conflict by shifting up to two hours on
 the *same* day, never onto another day), and advances the cursor in the same serializable
 transaction that does the booking, so a crashed or duplicated cron run cannot double-book
-or skip an occurrence. **Not yet reachable by any route or cron entry as of 2026-07-29** —
-see "Known gaps".
+or skip an occurrence. Admin list/create: `GET`/`POST /api/recurring`. Materialisation runs
+from `POST /api/cron/sweep` (`recurring-materialise`).
 
 ### Review requests
 `ReviewRequestService.scheduleForCompleted`/`dispatchDue` asks a customer for a Google
 review a fixed delay after a completed appointment, gated by marketing consent (the AND of
 the `Customer.marketingOptIn` flag and the newest `ConsentRecord` of the relevant type — a
 stale flag can never override a withdrawal), a lifetime cap of 3 asks, and cooldowns after
-both a send and a click. **Not yet reachable by any route or cron entry as of
-2026-07-29** — see "Known gaps".
+both a send and a click. Click tracking: `GET /api/review/[token]`; admin metrics:
+`GET /api/reviews/metrics`; dispatch: `POST /api/cron/sweep` (`review-dispatch`).
 
 ### GDPR export and erasure
 `GdprService.exportCustomerData` assembles a complete, machine-readable Art. 15/20 export
@@ -265,8 +265,9 @@ by walking every relation the schema attaches to a customer with id-scoped queri
 filter that could widen beyond the one subject). `GdprService.eraseCustomerData` anonymises
 rather than deletes — see "GDPR erasure by anonymisation, not deletion" in
 `docs/decisions.md` for why — and `verifyErasure` re-scans the database for the destroyed
-identifiers to prove the erasure actually took. **Not yet reachable by any admin route as
-of 2026-07-29** — see "Known gaps".
+identifiers to prove the erasure actually took. Admin queue and filing:
+`GET`/`POST /api/gdpr/requests`, processing: `PATCH /api/gdpr/requests/[id]`. No
+customer self-service route yet.
 
 ### Customer history
 `CustomerHistoryService.getCustomerProfile` is the stylist-facing "what do we know about
@@ -274,10 +275,11 @@ this hair" view: pinned notes, allergies (always pinned, regardless of what the 
 asked for — a colleague forgetting to pin an allergy note must not hide it), colour-formula
 history (stored as a JSON envelope inside a `formula`-kind `CustomerNote`, see the
 docstring on `serializeFormula` for the tradeoff of not adding a dedicated column), derived
-preferred staff/service, and lifetime-value stats. **Not yet reachable by any admin route
-as of 2026-07-29** — `apps/admin/app/api/customers/[id]/route.ts` still writes notes
-through the older, plainer `salonRepository.addCustomerNote` rather than this service. See
-"Known gaps".
+preferred staff/service, and lifetime-value stats. Admin routes:
+`GET /api/customers/[id]/history`, `POST /api/customers/[id]/history/notes`,
+`PATCH`/`DELETE /api/customers/[id]/history/notes/[noteId]`. The older
+`salonRepository.addCustomerNote` path on `PATCH /api/customers/[id]` remains for simple
+notes attached during a customer edit.
 
 ### Admin audit log
 Every mutating `adminRoute` call writes an `AuditLog` row (`actorId`, `actorEmail`,
@@ -285,9 +287,9 @@ Every mutating `adminRoute` call writes an `AuditLog` row (`actorId`, `actorEmai
 `userAgent`) via `salonRepository.createAuditLog`, and a failed audit write is logged loudly
 rather than silently swallowed or allowed to roll back the mutation it describes.
 Redaction (`redactForAudit`) strips any key that looks like a password, token, secret,
-credential, card number or IBAN before the row is ever written. This is the one new
-capability that is fully wired end to end today — it needs no separate route because it
-piggybacks on every existing admin mutation. The five legacy `/api/staff/[id]/**` routes
+credential, card number or IBAN before the row is ever written. Mutations are audited
+automatically via `adminRoute`; read access: `GET /api/audit-log` (owner/manager). The five
+legacy `/api/staff/[id]/**` routes
 that call `requireSession` directly instead of `adminRoute` (see `docs/api.md`) are the one
 gap: those mutations are not audited.
 
@@ -333,12 +335,11 @@ Stated plainly rather than left for someone to discover in production:
   `packages/db/prisma/schema.prisma` or in any query in `packages/core`. One deployment
   serves exactly one salon. Onboarding a second salon today means a second deployment, not
   a new row.
-- **No Pub/Sub consumer.** `packages/gcp/src/pubsub.ts` publishes SMS/WhatsApp
-  notification events and `NotificationService` reports them as `sent` as soon as the
-  publish call itself succeeds — but nothing in this repository subscribes to that topic.
-  There is no worker, no push endpoint, and no partner integration wired up, so an SMS or
-  WhatsApp notification is published and then goes nowhere. Only Gmail (the `web` channel)
-  and Cloud Tasks-scheduled delivery are actually connected end to end.
+- **No Pub/Sub consumer in-repo for outbound publishes only.** `packages/gcp/src/pubsub.ts`
+  publishes SMS/WhatsApp notification events from the reminder pipeline; delivery is handled
+  by `POST /api/tasks/pubsub` (Pub/Sub push to the web app), which calls
+  `NotificationService.deliverPubSubEvent`. There is still no partner worker outside this
+  repository — only Gmail and the push endpoint are wired end to end.
 - **`eslint-config-next` is inert.** It is a listed `devDependency` (`^16.0.0`) but the
   root `.eslintrc.cjs` extends only `eslint:recommended` and
   `plugin:@typescript-eslint/recommended` — nothing in the repository extends
@@ -348,11 +349,11 @@ Stated plainly rather than left for someone to discover in production:
   something did extend it. The practical effect: no Next.js-specific rule, no
   accessibility (`jsx-a11y`) rule, and no `react-hooks` rule runs today. `pnpm lint` only
   ever ran the generic TypeScript rules.
-- **The new feature services are ahead of their routes.** As detailed in section 5, five of
-  the nine services added to `packages/core` (recurring series, review requests, GDPR
-  export/erasure, customer history, and full waitlist/voucher housekeeping) are
-  implemented and tested but not yet fully reachable through `apps/web`/`apps/admin` routes
-  or scheduled jobs. This is expected to close as the parallel route-adding workstream
-  continues; re-verify against `docs/api.md`'s dated snapshot before assuming otherwise.
+- **A few feature routes are still thin.** Customer history is wired
+  (`GET /api/customers/[id]/history` + notes CRUD via `CustomerHistoryService`).
+  Voucher checkout redemption is wired (`voucherCode` on `POST /api/payments/checkout`).
+  Recurring series lifecycle beyond create/list (pause, resume, skip, end) is available
+  via `PATCH /api/recurring/[id]` with `{ action }`. Re-verify against `docs/api.md`
+  before assuming otherwise.
 - **The rate-limit store is per-instance and in-memory.** See `docs/api.md` — a
   Postgres-backed store is a named seam, not yet implemented.

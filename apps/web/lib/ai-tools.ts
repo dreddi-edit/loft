@@ -1,12 +1,32 @@
-import type { Toolset } from "@hair-simo/ai";
-import { BookingService, PricingService } from "@hair-simo/core";
-import { salonRepository } from "@hair-simo/core";
+import { randomUUID } from "node:crypto";
+import {
+  createBookingToolset,
+  type AppointmentSummary,
+  type BookingBackend,
+  type CreateBookingInput,
+  type ServiceSummary,
+  type ToolChannel,
+  type ToolLinks,
+  type Toolset,
+} from "@hair-simo/ai";
+import { BookingService, PricingService, salonRepository } from "@hair-simo/core";
+import { formatSalonTimeRange, salonDayKey, verifyAppointmentAccessToken } from "@hair-simo/core";
 import type { AppLocale } from "@hair-simo/i18n";
 import { DEFAULT_LOCALE, getServiceTranslationName } from "@hair-simo/i18n";
-import { SALON_TIME_ZONE, formatSalonClock, salonTodayKey } from "./web-datetime";
+import { contactInfo } from "./site-content";
+import {
+  SALON_TIME_ZONE,
+  formatSalonClock,
+  formatSalonDateTime,
+  fromSalonWallClock,
+  salonTodayKey,
+} from "./web-datetime";
 
 const bookingService = new BookingService();
 const pricingService = new PricingService();
+
+/** Bounds the pricing fan-out of the "what do you offer" answer. */
+const MAX_LISTED_SERVICES = 12;
 
 const aliasToSlug: Array<{ match: RegExp; slug: string }> = [
   { match: /balayage|str[aä]hn|highlight|meches/i, slug: "balayage-straehnen" },
@@ -18,177 +38,240 @@ const aliasToSlug: Array<{ match: RegExp; slug: string }> = [
   { match: /haircut-men|men-cut/i, slug: "herren-schnitt" },
 ];
 
-type ToolMessages = {
-  noSlots: string;
-  slots: (count: number, preview: string, bookingHref: string) => string;
-  availabilityFailed: (reason: string, bookingHref: string) => string;
-  bookingHint: (bookingHref: string) => string;
-  rescheduleHint: (appointmentId: string, manageHref: string) => string;
-  cancelHint: (appointmentId: string) => string;
-  noServices: (servicesHref: string) => string;
-  serviceInfo: (name: string, total: string, deposit: string, servicesHref: string) => string;
-  serviceInfoFailed: (reason: string, servicesHref: string) => string;
+type ServiceRow = {
+  slug: string;
+  durationMin: number;
+  translations: { locale: string; name: string }[];
 };
 
-const messages: Record<AppLocale, ToolMessages> = {
-  de: {
-    noSlots: "Heute sind fuer diesen Service leider keine freien Slots verfuegbar.",
-    slots: (count, preview, bookingHref) =>
-      `Freie Slots heute (${count}), Ortszeit Brixen (${SALON_TIME_ZONE}): ${preview}. Buchung: ${bookingHref}`,
-    availabilityFailed: (reason, bookingHref) =>
-      `Verfuegbarkeit gerade nicht abrufbar (${reason}). Bitte oeffne ${bookingHref}.`,
-    bookingHint: (bookingHref) =>
-      `Ich kann die Buchung vorbereiten. Bitte nutze den Buchungsflow: ${bookingHref}`,
-    rescheduleHint: (appointmentId, manageHref) =>
-      `Umbuchung moeglich. Bitte oeffne deinen Manage-Link oder gehe zu ${manageHref} und nutze die Termin-ID ${appointmentId}.`,
-    cancelHint: (appointmentId) =>
-      `Storno moeglich ueber den Manage-Link. Falls du willst, kann ich dir die Schritte fuer Termin ${appointmentId} geben.`,
-    noServices: (servicesHref) =>
-      `Aktuell sind keine Leistungen hinterlegt. Bitte schau unter ${servicesHref}.`,
-    serviceInfo: (name, total, deposit, servicesHref) =>
-      `${name}: Gesamt ${total} EUR, Anzahlung ${deposit} EUR. Details: ${servicesHref}`,
-    serviceInfoFailed: (reason, servicesHref) =>
-      `Preisinfo gerade nicht abrufbar (${reason}). Bitte oeffne ${servicesHref}.`,
-  },
-  it: {
-    noSlots: "Oggi purtroppo non ci sono orari liberi per questo servizio.",
-    slots: (count, preview, bookingHref) =>
-      `Orari liberi oggi (${count}), ora locale di Bressanone (${SALON_TIME_ZONE}): ${preview}. Prenotazione: ${bookingHref}`,
-    availabilityFailed: (reason, bookingHref) =>
-      `Disponibilita non consultabile al momento (${reason}). Apri ${bookingHref}.`,
-    bookingHint: (bookingHref) =>
-      `Posso preparare la prenotazione. Usa il flusso di prenotazione: ${bookingHref}`,
-    rescheduleHint: (appointmentId, manageHref) =>
-      `La riprogrammazione e possibile. Apri il tuo link di gestione oppure vai su ${manageHref} e usa il codice appuntamento ${appointmentId}.`,
-    cancelHint: (appointmentId) =>
-      `Puoi annullare tramite il link di gestione. Se vuoi ti spiego i passaggi per l'appuntamento ${appointmentId}.`,
-    noServices: (servicesHref) =>
-      `Al momento non ci sono servizi registrati. Dai un'occhiata a ${servicesHref}.`,
-    serviceInfo: (name, total, deposit, servicesHref) =>
-      `${name}: totale ${total} EUR, acconto ${deposit} EUR. Dettagli: ${servicesHref}`,
-    serviceInfoFailed: (reason, servicesHref) =>
-      `Informazioni sui prezzi non disponibili al momento (${reason}). Apri ${servicesHref}.`,
-  },
-  fr: {
-    noSlots: "Aujourd'hui il n'y a malheureusement aucun creneau libre pour ce service.",
-    slots: (count, preview, bookingHref) =>
-      `Creneaux libres aujourd'hui (${count}), heure locale de Bressanone (${SALON_TIME_ZONE}) : ${preview}. Reservation : ${bookingHref}`,
-    availabilityFailed: (reason, bookingHref) =>
-      `Disponibilites indisponibles pour le moment (${reason}). Merci d'ouvrir ${bookingHref}.`,
-    bookingHint: (bookingHref) =>
-      `Je peux preparer la reservation. Merci d'utiliser le parcours de reservation : ${bookingHref}`,
-    rescheduleHint: (appointmentId, manageHref) =>
-      `Le report est possible. Ouvrez votre lien de gestion ou allez sur ${manageHref} avec la reference ${appointmentId}.`,
-    cancelHint: (appointmentId) =>
-      `L'annulation passe par le lien de gestion. Si vous voulez, je vous donne les etapes pour le rendez-vous ${appointmentId}.`,
-    noServices: (servicesHref) =>
-      `Aucune prestation n'est enregistree pour le moment. Consultez ${servicesHref}.`,
-    serviceInfo: (name, total, deposit, servicesHref) =>
-      `${name} : total ${total} EUR, acompte ${deposit} EUR. Details : ${servicesHref}`,
-    serviceInfoFailed: (reason, servicesHref) =>
-      `Tarifs indisponibles pour le moment (${reason}). Merci d'ouvrir ${servicesHref}.`,
-  },
-  en: {
-    noSlots: "There are no free slots for this service today.",
-    slots: (count, preview, bookingHref) =>
-      `Free slots today (${count}), Brixen local time (${SALON_TIME_ZONE}): ${preview}. Booking: ${bookingHref}`,
-    availabilityFailed: (reason, bookingHref) =>
-      `Availability is not reachable right now (${reason}). Please open ${bookingHref}.`,
-    bookingHint: (bookingHref) =>
-      `I can prepare the booking. Please use the booking flow: ${bookingHref}`,
-    rescheduleHint: (appointmentId, manageHref) =>
-      `Rescheduling is possible. Open your manage link or go to ${manageHref} and use the appointment id ${appointmentId}.`,
-    cancelHint: (appointmentId) =>
-      `Cancelling works through the manage link. If you like, I can walk you through it for appointment ${appointmentId}.`,
-    noServices: (servicesHref) =>
-      `No services are configured right now. Please check ${servicesHref}.`,
-    serviceInfo: (name, total, deposit, servicesHref) =>
-      `${name}: total ${total} EUR, deposit ${deposit} EUR. Details: ${servicesHref}`,
-    serviceInfoFailed: (reason, servicesHref) =>
-      `Price info is not reachable right now (${reason}). Please open ${servicesHref}.`,
-  },
-};
-
-function resolveServiceSlug(raw: string) {
-  const value = raw.trim();
-  if (!value) return "damen-schnitt";
-  for (const entry of aliasToSlug) {
-    if (entry.match.test(value)) return entry.slug;
-  }
-  return value;
+function serviceName(service: ServiceRow, locale: AppLocale): string {
+  return getServiceTranslationName(
+    service.translations,
+    locale,
+    service.translations.find((entry) => entry.locale === "de")?.name ?? service.slug,
+  );
 }
 
-function reasonOf(error: unknown) {
-  return error instanceof Error ? error.message : "error";
-}
-
-function euro(amountCents: number) {
-  return (amountCents / 100).toFixed(2);
-}
-
-/**
- * The assistant answers in the caller's language and in salon time. `Toolset` in
- * @hair-simo/ai carries no locale, so the locale is bound here when the toolset is
- * built; a route that knows the request locale should call this instead of using the
- * `aiTools` default.
- */
-export function createAiTools(locale: AppLocale = DEFAULT_LOCALE): Toolset {
-  const copy = messages[locale];
-  const bookingHref = (slug: string) => `/${locale}/booking?service=${slug}`;
-  const manageHref = `/${locale}/manage`;
-  const servicesHref = `/${locale}/services`;
-
+async function toServiceSummary(service: ServiceRow, locale: AppLocale): Promise<ServiceSummary> {
+  const pricing = await pricingService.getPricing({ serviceSlug: service.slug });
   return {
-    checkAvailability: async (serviceId: string) => {
-      const slug = resolveServiceSlug(serviceId);
-      try {
-        const slots = await bookingService.getAvailability(slug, salonTodayKey());
-        if (slots.length === 0) return copy.noSlots;
-        const preview = slots
-          .slice(0, 5)
-          .map((slot) => formatSalonClock(slot.startsAt, locale))
-          .join(", ");
-        return copy.slots(slots.length, preview, bookingHref(slug));
-      } catch (error) {
-        return copy.availabilityFailed(reasonOf(error), bookingHref(slug));
-      }
-    },
-    createBooking: async (serviceId: string, customerId?: string) => {
-      void customerId;
-      return copy.bookingHint(bookingHref(resolveServiceSlug(serviceId)));
-    },
-    rescheduleBooking: async (appointmentId: string) => {
-      return copy.rescheduleHint(appointmentId, manageHref);
-    },
-    cancelBooking: async (appointmentId: string) => {
-      return copy.cancelHint(appointmentId);
-    },
-    getServiceInfo: async (serviceSlug: string) => {
-      try {
-        const slug = resolveServiceSlug(serviceSlug);
-        const services = await salonRepository.listServices();
-        const service = services.find((entry) => entry.slug === slug) ?? services[0];
-        if (!service) return copy.noServices(servicesHref);
-        const pricing = await pricingService.getPricing({
-          serviceSlug: service.slug,
-          depositPercentage: 30,
-        });
-        const name = getServiceTranslationName(
-          service.translations,
-          locale,
-          service.translations.find((entry) => entry.locale === "de")?.name ?? service.slug,
-        );
-        return copy.serviceInfo(
-          name,
-          euro(pricing.total.amountCents),
-          euro(pricing.deposit.amountCents),
-          servicesHref,
-        );
-      } catch (error) {
-        return copy.serviceInfoFailed(reasonOf(error), servicesHref);
-      }
-    },
+    slug: service.slug,
+    name: serviceName(service, locale),
+    durationMin: service.durationMin,
+    totalCents: pricing.total.amountCents,
+    depositCents: pricing.deposit.amountCents,
+    depositRequired: pricing.depositRequired,
   };
 }
 
-export const aiTools = createAiTools();
+/**
+ * Maps whatever the customer said onto a slug. Unlike the previous version this returns
+ * nothing when it does not recognise the service: silently defaulting to "damen-schnitt"
+ * was harmless while the tools only produced text, and books the wrong service now that
+ * they do not.
+ */
+function candidateSlug(reference: string): string | null {
+  const value = reference.trim();
+  if (!value) return null;
+  for (const entry of aliasToSlug) {
+    if (entry.match.test(value)) return entry.slug;
+  }
+  return /^[a-z0-9-]{1,100}$/i.test(value) ? value.toLowerCase() : null;
+}
+
+function appointmentSummary(
+  appointment: {
+    id: string;
+    customerId: string;
+    startsAt: Date;
+    endsAt: Date;
+    status: string;
+    service: { slug: string };
+    staff?: { displayName: string } | null;
+  },
+  name: string,
+  locale: AppLocale,
+): AppointmentSummary {
+  return {
+    id: appointment.id,
+    customerId: appointment.customerId,
+    startsAt: appointment.startsAt.toISOString(),
+    status: appointment.status,
+    serviceSlug: appointment.service.slug,
+    serviceName: name,
+    ...(appointment.staff?.displayName ? { staffName: appointment.staff.displayName } : {}),
+    when: formatSalonTimeRange(appointment.startsAt, appointment.endsAt, locale),
+  };
+}
+
+/**
+ * The database half of the assistant's tools. @hair-simo/ai owns the policy — token
+ * checks, read-back, confirmation codes, rate limits — and never sees Prisma; this
+ * adapter owns the queries and every conversion between a salon wall clock and an
+ * instant, which is why all of it goes through @hair-simo/core.
+ */
+export function createBookingBackend(locale: AppLocale): BookingBackend {
+  return {
+    listServices: async () => {
+      const services = await salonRepository.listServices();
+      return Promise.all(
+        services.slice(0, MAX_LISTED_SERVICES).map((service) => toServiceSummary(service, locale)),
+      );
+    },
+
+    findService: async (reference) => {
+      const slug = candidateSlug(reference);
+      if (slug) {
+        const direct = await salonRepository.findServiceBySlug(slug);
+        if (direct && direct.isActive) return toServiceSummary(direct, locale);
+      }
+      const needle = reference.trim().toLowerCase();
+      if (needle.length < 3) return null;
+      const services = await salonRepository.listServices();
+      const match = services.find((service) =>
+        service.translations.some((entry) => entry.name.toLowerCase().includes(needle)),
+      );
+      return match ? toServiceSummary(match, locale) : null;
+    },
+
+    listBusinessHours: async () => {
+      const hours = await salonRepository.listBusinessHours();
+      return hours.map((entry) => ({
+        dayOfWeek: entry.dayOfWeek,
+        isOpen: entry.isOpen,
+        startMin: entry.startMin,
+        endMin: entry.endMin,
+      }));
+    },
+
+    listAvailability: async (serviceSlug, dayKey) => {
+      const slots = await bookingService.getAvailability(serviceSlug, dayKey);
+      return slots.map((slot) => ({
+        startsAt: slot.startsAt.toISOString(),
+        label: formatSalonClock(slot.startsAt, locale),
+      }));
+    },
+
+    todayKey: (now) => salonTodayKey(now),
+
+    dayKeyOf: (instantIso) => salonDayKey(new Date(instantIso)),
+
+    resolveInstant: (dayKey, clock) => {
+      const [rawHour, rawMinute] = clock.split(":");
+      const padded = `${rawHour.padStart(2, "0")}:${rawMinute.padStart(2, "0")}`;
+      return fromSalonWallClock(`${dayKey}T${padded}`).toISOString();
+    },
+
+    verifyAccessToken: (token) => verifyAppointmentAccessToken(token),
+
+    findAppointment: async (appointmentId) => {
+      const appointment = await salonRepository.findAppointmentById(appointmentId);
+      if (!appointment) return null;
+      return appointmentSummary(appointment, serviceName(appointment.service, locale), locale);
+    },
+
+    createBooking: async (input: CreateBookingInput) => {
+      const appointment = await bookingService.createBooking({
+        serviceSlug: input.serviceSlug,
+        startsAt: input.startsAt,
+        customerEmail: input.email,
+        customerFirstName: input.firstName,
+        customerLastName: input.lastName,
+        customerPhone: input.phone,
+        locale: input.locale,
+        sourceChannel: input.channel,
+        marketingOptIn: input.marketingOptIn,
+        termsAccepted: true,
+      });
+      if (input.note) {
+        await salonRepository.addCustomerNote(appointment.customerId, input.note, {
+          kind: "general",
+        });
+      }
+      const service = await salonRepository.findServiceBySlug(input.serviceSlug);
+      return appointmentSummary(
+        appointment,
+        service ? serviceName(service, locale) : input.serviceSlug,
+        locale,
+      );
+    },
+
+    rescheduleAppointment: async (appointmentId, startsAtIso) => {
+      const appointment = await bookingService.reschedule(appointmentId, startsAtIso);
+      const service = await salonRepository.findServiceBySlug(appointment.service.slug);
+      return appointmentSummary(
+        appointment,
+        service ? serviceName(service, locale) : appointment.service.slug,
+        locale,
+      );
+    },
+
+    cancelAppointment: async (appointmentId, reason) => {
+      const appointment = await bookingService.cancel(appointmentId, reason);
+      const service = await salonRepository.findServiceBySlug(appointment.service.slug);
+      return appointmentSummary(
+        appointment,
+        service ? serviceName(service, locale) : appointment.service.slug,
+        locale,
+      );
+    },
+
+    recordConsent: async (input) =>
+      void (await salonRepository.recordConsent(
+        input.customerId,
+        input.type,
+        input.granted,
+        input.source,
+      )),
+
+    formatInstant: (instantIso) => formatSalonDateTime(instantIso, locale),
+  };
+}
+
+export type AiToolsOptions = {
+  locale?: AppLocale;
+  channel?: ToolChannel;
+  /**
+   * Server-derived key for the multi-turn booking draft. It must never be something the
+   * caller can pick for another person; the routes build it from the resolved client
+   * address plus an opaque server-issued chat id. Omitting it gives this request its own
+   * private draft, so a caller without one can still book — just not across turns.
+   */
+  conversationId?: string;
+  /** Manage-link JWT from the request. Verified inside the tools, never prompted. */
+  accessToken?: string;
+  log?: (message: string, fields: Record<string, unknown>) => void;
+};
+
+/**
+ * The assistant answers in the caller's language, in salon time, and only ever touches the
+ * appointment its access token names. `Toolset` in @hair-simo/ai carries no locale and no
+ * session, so both are bound here when the toolset is built.
+ */
+export function createAiTools(input?: AppLocale | AiToolsOptions): Toolset {
+  const options: AiToolsOptions = typeof input === "string" ? { locale: input } : (input ?? {});
+  const locale = options.locale ?? DEFAULT_LOCALE;
+  const links: ToolLinks = {
+    booking: (serviceSlug) =>
+      serviceSlug ? `/${locale}/booking?service=${serviceSlug}` : `/${locale}/booking`,
+    services: () => `/${locale}/services`,
+    manage: () => `/${locale}/manage`,
+  };
+
+  return createBookingToolset({
+    backend: createBookingBackend(locale),
+    session: {
+      conversationId: options.conversationId ?? `anon:${randomUUID()}`,
+      locale,
+      channel: options.channel ?? "web",
+      accessToken: options.accessToken,
+    },
+    links,
+    salon: {
+      address: `${contactInfo.address}, ${contactInfo.city}`,
+      phone: contactInfo.phone,
+      timeZone: SALON_TIME_ZONE,
+    },
+    ...(options.log ? { log: options.log } : {}),
+  });
+}

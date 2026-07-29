@@ -1,4 +1,5 @@
 import { ReminderService } from "@hair-simo/core";
+import { forEachActiveTenant } from "@hair-simo/db";
 import { z } from "zod";
 import { apiRoute } from "../../../../lib/api-handler";
 
@@ -20,5 +21,27 @@ export const POST = apiRoute<z.infer<typeof reminderBatchSchema>>(
     bodyLimitBytes: CRON_BODY_LIMIT_BYTES,
     schema: reminderBatchSchema,
   },
-  async ({ body }) => ({ data: await reminderService.dispatchDueReminders(body.withinHours) }),
+  async ({ body }) => {
+    const batches: Awaited<ReturnType<ReminderService["dispatchDueReminders"]>>[] = [];
+    await forEachActiveTenant(async () => {
+      batches.push(await reminderService.dispatchDueReminders(body.withinHours));
+    });
+
+    if (batches.length === 1) {
+      return { data: batches[0] };
+    }
+
+    return {
+      data: {
+        processed: batches.reduce((sum, batch) => sum + batch.processed, 0),
+        sent: batches.reduce((sum, batch) => sum + batch.sent, 0),
+        simulated: batches.reduce((sum, batch) => sum + batch.simulated, 0),
+        failed: batches.reduce((sum, batch) => sum + batch.failed, 0),
+        skipped: batches.reduce((sum, batch) => sum + batch.skipped, 0),
+        unreachable: batches.reduce((sum, batch) => sum + batch.unreachable, 0),
+        results: batches.flatMap((batch) => batch.results),
+        tenantCount: batches.length,
+      },
+    };
+  },
 );

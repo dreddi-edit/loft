@@ -7,6 +7,8 @@ export type SharedSecretDefinition = {
   envVars: readonly string[];
   header: string;
   scheme: SharedSecretScheme;
+  /** Extra places the same secret may appear (Cloud Scheduler uses X-Cron-Secret while OIDC owns Authorization). */
+  alternates?: readonly { header: string; scheme: SharedSecretScheme }[];
 };
 
 export const SHARED_SECRETS = {
@@ -22,8 +24,9 @@ export const SHARED_SECRETS = {
   },
   cron: {
     envVars: ["GCP_CLOUD_TASKS_SECRET", "CRON_SECRET"],
-    header: "authorization",
-    scheme: "bearer",
+    header: "x-cron-secret",
+    scheme: "raw",
+    alternates: [{ header: "authorization", scheme: "bearer" }],
   },
 } as const satisfies Record<string, SharedSecretDefinition>;
 
@@ -103,17 +106,31 @@ export function timingSafeCompare(a: string, b: string): boolean {
   return timingSafeEqual(left, right);
 }
 
-export function extractPresentedSecret(
+function readSecretFromHeader(
   headers: Headers,
-  definition: SharedSecretDefinition,
+  header: string,
+  scheme: SharedSecretScheme,
 ): string | null {
-  const raw = headers.get(definition.header);
+  const raw = headers.get(header);
   if (!raw) return null;
-  if (definition.scheme === "raw") return raw.trim() === "" ? null : raw.trim();
+  if (scheme === "raw") return raw.trim() === "" ? null : raw.trim();
   const match = /^bearer\s+(.+)$/i.exec(raw.trim());
   if (!match) return null;
   const token = match[1].trim();
   return token === "" ? null : token;
+}
+
+export function extractPresentedSecret(
+  headers: Headers,
+  definition: SharedSecretDefinition,
+): string | null {
+  const primary = readSecretFromHeader(headers, definition.header, definition.scheme);
+  if (primary !== null) return primary;
+  for (const alternate of definition.alternates ?? []) {
+    const value = readSecretFromHeader(headers, alternate.header, alternate.scheme);
+    if (value !== null) return value;
+  }
+  return null;
 }
 
 /**

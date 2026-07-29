@@ -78,9 +78,64 @@ enum DataRequestStatus {
   failed
 }
 
+enum TenantStatus {
+  provisioning
+  active
+  suspended
+}
+
+
+model Tenant {
+  id            String       @id @default(cuid())
+  slug          String       @unique
+  displayName   String
+  legalName     String?
+  timeZone      String       @default("Europe/Rome")
+  defaultLocale String       @default("it")
+  currency      String       @default("EUR")
+  status        TenantStatus @default(active)
+  webDomain     String?
+  adminDomain   String?
+  settings      Json         @default("{}")
+  createdAt     DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime     @updatedAt @db.Timestamptz(3)
+
+  users            User[]
+  staffProfiles    StaffProfile[]
+  customers        Customer[]
+  services         Service[]
+  businessHours    BusinessHours[]
+  products         Product[]
+  appointments     Appointment[]
+  payments         Payment[]
+  vouchers         Voucher[]
+  waitlistEntries  Waitlist[]
+  recurringSeries  RecurringSeries[]
+  conversations    Conversation[]
+  callLogs         CallLog[]
+  notifications    NotificationLog[]
+  auditLogs        AuditLog[]
+  dataRequests     DataRequest[]
+  customerNotes    CustomerNote[]
+  consentRecords   ConsentRecord[]
+  serviceTranslations ServiceTranslation[]
+  staffServices    StaffService[]
+  staffAvailability StaffAvailabilityRule[]
+  staffTimeOffs    StaffTimeOff[]
+  appointmentHistory AppointmentStatusHistory[]
+  refunds          Refund[]
+  bookingVerifications BookingVerification[]
+  reviewRequests   ReviewRequest[]
+  voucherRedemptions VoucherRedemption[]
+  messages         Message[]
+  inventoryMovements InventoryMovement[]
+}
+
 model User {
   id           String        @id @default(cuid())
-  email        String        @unique
+  tenantId         String             @default("cltenant00000000000000001")
+  tenant           Tenant             @relation(fields: [tenantId], references: [id])
+  email        String
   passwordHash String
   firstName    String
   lastName     String
@@ -90,6 +145,8 @@ model User {
   updatedAt    DateTime      @updatedAt @db.Timestamptz(3)
   staffProfile StaffProfile?
   roles        UserRole[]
+  @@unique([tenantId, email])
+  @@index([tenantId])
 }
 
 model Role {
@@ -116,6 +173,8 @@ model UserRole {
 
 model StaffProfile {
   id               String                  @id @default(cuid())
+  tenantId         String             @default("cltenant00000000000000001")
+  tenant           Tenant             @relation(fields: [tenantId], references: [id])
   userId           String                  @unique
   displayName      String
   bio              String?
@@ -132,12 +191,15 @@ model StaffProfile {
   appointments     Appointment[]
   waitlistEntries  Waitlist[]
   recurringSeries  RecurringSeries[]
+  @@index([tenantId])
 }
 
 model Customer {
   id              String            @id @default(cuid())
-  email           String?           @unique
-  phone           String?           @unique
+  tenantId         String             @default("cltenant00000000000000001")
+  tenant           Tenant             @relation(fields: [tenantId], references: [id])
+  email           String?
+  phone           String?
   firstName       String
   lastName        String
   locale          String            @default("en")
@@ -158,10 +220,15 @@ model Customer {
   vouchers        Voucher[]
 
   @@index([deletedAt])
+  @@unique([tenantId, email])
+  @@unique([tenantId, phone])
+  @@index([tenantId])
 }
 
 model CustomerNote {
   id         String           @id @default(cuid())
+  tenantId   String   @default("cltenant00000000000000001")
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
   customerId String
   note       String
   kind       CustomerNoteKind @default(general)
@@ -173,11 +240,14 @@ model CustomerNote {
 
   @@index([customerId])
   @@index([customerId, kind])
+  @@index([tenantId])
 }
 
 model Service {
   id              String               @id @default(cuid())
-  slug            String               @unique
+  tenantId         String             @default("cltenant00000000000000001")
+  tenant           Tenant             @relation(fields: [tenantId], references: [id])
+  slug            String
   category        String
   durationMin     Int
   bufferAfterMin  Int                  @default(10)
@@ -191,10 +261,14 @@ model Service {
   appointments    Appointment[]
   waitlistEntries Waitlist[]
   recurringSeries RecurringSeries[]
+  @@unique([tenantId, slug])
+  @@index([tenantId])
 }
 
 model ServiceTranslation {
   id          String   @id @default(cuid())
+  tenantId   String   @default("cltenant00000000000000001")
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
   serviceId   String
   locale      String
   name        String
@@ -205,10 +279,13 @@ model ServiceTranslation {
 
   @@unique([serviceId, locale])
   @@index([serviceId])
+  @@index([tenantId])
 }
 
 model StaffService {
   id        String       @id @default(cuid())
+  tenantId   String   @default("cltenant00000000000000001")
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
   staffId   String
   serviceId String
   createdAt DateTime     @default(now()) @db.Timestamptz(3)
@@ -218,10 +295,13 @@ model StaffService {
 
   @@unique([staffId, serviceId])
   @@index([serviceId])
+  @@index([tenantId])
 }
 
 model BusinessHours {
   id        String   @id @default(cuid())
+  tenantId         String             @default("cltenant00000000000000001")
+  tenant           Tenant             @relation(fields: [tenantId], references: [id])
   dayOfWeek Int
   startMin  Int
   endMin    Int
@@ -230,10 +310,14 @@ model BusinessHours {
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
   @@index([dayOfWeek])
+  @@unique([tenantId, dayOfWeek])
+  @@index([tenantId])
 }
 
 model StaffAvailabilityRule {
   id        String       @id @default(cuid())
+  tenantId   String   @default("cltenant00000000000000001")
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
   staffId   String
   dayOfWeek Int
   startMin  Int
@@ -243,10 +327,13 @@ model StaffAvailabilityRule {
   staff     StaffProfile @relation(fields: [staffId], references: [id], onDelete: Cascade)
 
   @@index([staffId, dayOfWeek])
+  @@index([tenantId])
 }
 
 model StaffTimeOff {
   id        String       @id @default(cuid())
+  tenantId   String   @default("cltenant00000000000000001")
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
   staffId   String
   startsAt  DateTime     @db.Timestamptz(3)
   endsAt    DateTime     @db.Timestamptz(3)
@@ -256,10 +343,13 @@ model StaffTimeOff {
   staff     StaffProfile @relation(fields: [staffId], references: [id], onDelete: Cascade)
 
   @@index([staffId, startsAt, endsAt])
+  @@index([tenantId])
 }
 
 model Appointment {
   id                 String                     @id @default(cuid())
+  tenantId         String             @default("cltenant00000000000000001")
+  tenant           Tenant             @relation(fields: [tenantId], references: [id])
   customerId         String
   serviceId          String
   staffId            String?
@@ -293,10 +383,13 @@ model Appointment {
   @@index([serviceId])
   @@index([seriesId])
   @@index([googleEventId])
+  @@index([tenantId])
 }
 
 model AppointmentStatusHistory {
   id            String            @id @default(cuid())
+  tenantId   String   @default("cltenant00000000000000001")
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
   appointmentId String
   status        AppointmentStatus
   changedBy     String?
@@ -306,10 +399,13 @@ model AppointmentStatusHistory {
   appointment   Appointment       @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
 
   @@index([appointmentId, createdAt])
+  @@index([tenantId])
 }
 
 model Payment {
   id                 String              @id @default(cuid())
+  tenantId         String             @default("cltenant00000000000000001")
+  tenant           Tenant             @relation(fields: [tenantId], references: [id])
   appointmentId      String
   provider           String
   providerIntentId   String?
@@ -328,10 +424,13 @@ model Payment {
 
   @@index([appointmentId])
   @@index([status, createdAt])
+  @@index([tenantId])
 }
 
 model Refund {
   id            String   @id @default(cuid())
+  tenantId   String   @default("cltenant00000000000000001")
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
   paymentId     String
   amountCents   Int
   reason        String?
@@ -341,10 +440,13 @@ model Refund {
   payment       Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
 
   @@index([paymentId])
+  @@index([tenantId])
 }
 
 model Conversation {
   id          String    @id @default(cuid())
+  tenantId         String             @default("cltenant00000000000000001")
+  tenant           Tenant             @relation(fields: [tenantId], references: [id])
   customerId  String?
   channel     Channel
   locale      String    @default("en")
@@ -356,10 +458,13 @@ model Conversation {
 
   @@index([externalRef])
   @@index([customerId])
+  @@index([tenantId])
 }
 
 model Message {
   id             String       @id @default(cuid())
+  tenantId   String   @default("cltenant00000000000000001")
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
   conversationId String
   role           String
   content        String
@@ -369,10 +474,13 @@ model Message {
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   @@index([conversationId, createdAt])
+  @@index([tenantId])
 }
 
 model CallLog {
   id          String    @id @default(cuid())
+  tenantId         String             @default("cltenant00000000000000001")
+  tenant           Tenant             @relation(fields: [tenantId], references: [id])
   customerId  String?
   locale      String    @default("en")
   fromNumber  String?
@@ -386,10 +494,13 @@ model CallLog {
 
   @@index([createdAt])
   @@index([customerId])
+  @@index([tenantId])
 }
 
 model NotificationLog {
   id            String             @id @default(cuid())
+  tenantId         String             @default("cltenant00000000000000001")
+  tenant           Tenant             @relation(fields: [tenantId], references: [id])
   appointmentId String?
   channel       Channel
   recipient     String
@@ -407,10 +518,13 @@ model NotificationLog {
   @@index([templateKey, sentAt])
   @@index([status, createdAt])
   @@index([createdAt])
+  @@index([tenantId])
 }
 
 model ConsentRecord {
   id         String   @id @default(cuid())
+  tenantId   String   @default("cltenant00000000000000001")
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
   customerId String
   type       String
   granted    Boolean
@@ -421,11 +535,14 @@ model ConsentRecord {
   customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
   @@index([customerId, type])
+  @@index([tenantId])
 }
 
 model Product {
   id                 String              @id @default(cuid())
-  sku                String              @unique
+  tenantId         String             @default("cltenant00000000000000001")
+  tenant           Tenant             @relation(fields: [tenantId], references: [id])
+  sku                String
   name               String
   priceCents         Int
   stock              Int                 @default(0)
@@ -434,10 +551,14 @@ model Product {
   inventoryMovements InventoryMovement[]
 
   @@index([name])
+  @@unique([tenantId, sku])
+  @@index([tenantId])
 }
 
 model InventoryMovement {
   id           String                @id @default(cuid())
+  tenantId   String   @default("cltenant00000000000000001")
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
   productId    String
   type         InventoryMovementType @default(adjustment)
   delta        Int
@@ -447,10 +568,13 @@ model InventoryMovement {
   product      Product               @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@index([productId, createdAt])
+  @@index([tenantId])
 }
 
 model AuditLog {
   id         String   @id @default(cuid())
+  tenantId         String             @default("cltenant00000000000000001")
+  tenant           Tenant             @relation(fields: [tenantId], references: [id])
   actorId    String?
   actorEmail String
   actorRole  String
@@ -467,10 +591,13 @@ model AuditLog {
   @@index([entityType, entityId])
   @@index([actorId, createdAt])
   @@index([createdAt])
+  @@index([tenantId])
 }
 
 model Waitlist {
   id                     String         @id @default(cuid())
+  tenantId         String             @default("cltenant00000000000000001")
+  tenant           Tenant             @relation(fields: [tenantId], references: [id])
   customerId             String
   serviceId              String
   staffId                String?
@@ -491,10 +618,13 @@ model Waitlist {
   @@index([earliestAt, latestAt])
   @@index([customerId])
   @@index([staffId])
+  @@index([tenantId])
 }
 
 model BookingVerification {
   id            String      @id @default(cuid())
+  tenantId   String   @default("cltenant00000000000000001")
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
   appointmentId String      @unique
   tokenHash     String      @unique
   expiresAt     DateTime    @db.Timestamptz(3)
@@ -505,11 +635,14 @@ model BookingVerification {
   appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
 
   @@index([expiresAt])
+  @@index([tenantId])
 }
 
 model Voucher {
   id                 String              @id @default(cuid())
-  code               String              @unique
+  tenantId         String             @default("cltenant00000000000000001")
+  tenant           Tenant             @relation(fields: [tenantId], references: [id])
+  code               String
   initialCents       Int
   remainingCents     Int
   currency           String              @default("EUR")
@@ -524,10 +657,14 @@ model Voucher {
 
   @@index([issuedToCustomerId])
   @@index([active, expiresAt])
+  @@unique([tenantId, code])
+  @@index([tenantId])
 }
 
 model VoucherRedemption {
   id            String       @id @default(cuid())
+  tenantId   String   @default("cltenant00000000000000001")
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
   voucherId     String
   appointmentId String?
   paymentId     String?
@@ -541,10 +678,13 @@ model VoucherRedemption {
   @@index([voucherId])
   @@index([appointmentId])
   @@index([paymentId])
+  @@index([tenantId])
 }
 
 model RecurringSeries {
   id            String        @id @default(cuid())
+  tenantId         String             @default("cltenant00000000000000001")
+  tenant           Tenant             @relation(fields: [tenantId], references: [id])
   customerId    String
   serviceId     String
   staffId       String?
@@ -565,10 +705,13 @@ model RecurringSeries {
   @@index([serviceId])
   @@index([staffId])
   @@index([active, nextAt])
+  @@index([tenantId])
 }
 
 model ReviewRequest {
   id            String      @id @default(cuid())
+  tenantId   String   @default("cltenant00000000000000001")
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
   appointmentId String      @unique
   sentAt        DateTime?   @db.Timestamptz(3)
   clickedAt     DateTime?   @db.Timestamptz(3)
@@ -578,10 +721,13 @@ model ReviewRequest {
   appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
 
   @@index([sentAt])
+  @@index([tenantId])
 }
 
 model DataRequest {
   id             String            @id @default(cuid())
+  tenantId         String             @default("cltenant00000000000000001")
+  tenant           Tenant             @relation(fields: [tenantId], references: [id])
   customerId     String
   type           DataRequestType
   status         DataRequestStatus @default(pending)
@@ -595,4 +741,5 @@ model DataRequest {
 
   @@index([customerId, status])
   @@index([status, createdAt])
+  @@index([tenantId])
 }

@@ -68,3 +68,5 @@ export * from "./customer-history-service";
 export * from "./review-request-service";
 export * from "./voucher-service";
 export * from "./recurring-service";
+export * from "./data-retention";
+export * from "./tenant-resolve";

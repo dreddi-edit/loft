@@ -110,7 +110,9 @@ export const POST = adminRoute<z.infer<typeof dataRequestCreateSchema>>(
       select: { id: true },
     });
     if (!customer) {
-      throw httpError("NOT_FOUND", { logMessage: `data request for unknown customer` });
+      throw httpError("NOT_FOUND", {
+        logMessage: `data request raised for unknown customer ${body.customerId}`,
+      });
     }
 
     // requestedBy is accountability, so it is taken from the session and never from the

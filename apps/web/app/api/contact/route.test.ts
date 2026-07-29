@@ -7,6 +7,13 @@ import { RATE_LIMIT_POLICIES, effectiveLimit, resetRateLimitStore } from "../../
 const send = vi.fn();
 
 vi.mock("@hair-simo/core", () => ({
+  resolveTenantContext: async () => ({
+    tenantId: "cltenant00000000000000001",
+    slug: "hairsimo-brixen",
+    displayName: "Hair Simo",
+    timeZone: "Europe/Rome",
+    defaultLocale: "it",
+  }),
   NotificationService: class {
     send = send;
   },
@@ -82,9 +89,7 @@ describe("POST /api/contact", () => {
   });
 
   it("returns 400 with field-level detail for an invalid submission", async () => {
-    const response = await POST(
-      jsonRequest({ name: "", email: "not-an-email", message: "hi" }),
-    );
+    const response = await POST(jsonRequest({ name: "", email: "not-an-email", message: "hi" }));
     expect(response.status).toBe(400);
     const body = await response.json();
     expect(body.error).toBe("VALIDATION_ERROR");

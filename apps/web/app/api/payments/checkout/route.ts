@@ -18,12 +18,36 @@ const checkoutSchema = z.object({
   mode: z.enum(["deposit", "full"]).default("deposit"),
   tipCents: z.number().int().min(0).optional(),
   customerEmail: z.string().trim().email().max(254).optional(),
+  voucherCode: z.string().trim().min(1).max(64).optional(),
 });
 
 const DOMAIN_ERRORS: Record<string, { code: ErrorCode; message: string }> = {
   APPOINTMENT_NOT_PAYABLE: {
     code: "CONFLICT",
     message: "This appointment can no longer be paid for.",
+  },
+  VOUCHER_CODE_MALFORMED: {
+    code: "VALIDATION_ERROR",
+    message: "That is not the shape of a voucher code.",
+  },
+  VOUCHER_CODE_CHECKSUM_FAILED: {
+    code: "VALIDATION_ERROR",
+    message: "That voucher code has a typo in it. Read it off the card again.",
+  },
+  VOUCHER_NOT_FOUND: { code: "NOT_FOUND", message: "No voucher matches this code." },
+  VOUCHER_INACTIVE: { code: "CONFLICT", message: "This voucher has been blocked." },
+  VOUCHER_EXPIRED: { code: "CONFLICT", message: "This voucher has expired." },
+  VOUCHER_CURRENCY_MISMATCH: {
+    code: "CONFLICT",
+    message: "This voucher was issued in a different currency.",
+  },
+  VOUCHER_INSUFFICIENT_BALANCE: {
+    code: "CONFLICT",
+    message: "The voucher does not have that much left on it.",
+  },
+  VOUCHER_REDEMPTION_AMOUNT_MISMATCH: {
+    code: "CONFLICT",
+    message: "This voucher was already redeemed against this appointment for another amount.",
   },
 };
 

@@ -18,6 +18,13 @@ vi.mock("@hair-simo/ai", async () => {
 });
 
 vi.mock("@hair-simo/core", () => ({
+  resolveTenantContext: async () => ({
+    tenantId: "cltenant00000000000000001",
+    slug: "hairsimo-brixen",
+    displayName: "Hair Simo",
+    timeZone: "Europe/Rome",
+    defaultLocale: "it",
+  }),
   salonRepository: {
     listServices: (...args: unknown[]) => listServices(...args),
     upsertConversationMessage: (...args: unknown[]) => upsertConversationMessage(...args),

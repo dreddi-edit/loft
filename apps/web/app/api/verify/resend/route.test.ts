@@ -11,6 +11,13 @@ const { core } = vi.hoisted(() => ({
 }));
 
 vi.mock("@hair-simo/core", () => ({
+  resolveTenantContext: async () => ({
+    tenantId: "cltenant00000000000000001",
+    slug: "hairsimo-brixen",
+    displayName: "Hair Simo",
+    timeZone: "Europe/Rome",
+    defaultLocale: "it",
+  }),
   MAX_VERIFICATION_SENDS: 3,
   VERIFICATION_RESEND_COOLDOWN_MS: 60_000,
   NotificationService: class {

@@ -7,6 +7,13 @@ import { RATE_LIMIT_POLICIES, effectiveLimit, resetRateLimitStore } from "../../
 const listServices = vi.fn();
 
 vi.mock("@hair-simo/core", () => ({
+  resolveTenantContext: async () => ({
+    tenantId: "cltenant00000000000000001",
+    slug: "hairsimo-brixen",
+    displayName: "Hair Simo",
+    timeZone: "Europe/Rome",
+    defaultLocale: "it",
+  }),
   salonRepository: { listServices: (...args: unknown[]) => listServices(...args) },
 }));
 

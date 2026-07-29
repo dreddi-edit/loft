@@ -20,6 +20,13 @@ vi.mock("@hair-simo/core", () => {
   }
 
   return {
+    resolveTenantContext: async () => ({
+      tenantId: "cltenant00000000000000001",
+      slug: "hairsimo-brixen",
+      displayName: "Hair Simo",
+      timeZone: "Europe/Rome",
+      defaultLocale: "it",
+    }),
     WaitlistError,
     WaitlistService: class {
       join = mocks.join;

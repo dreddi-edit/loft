@@ -12,6 +12,13 @@ import { resetPublicConfigWarnings } from "../../../../lib/public-config";
 const confirmPayment = vi.fn();
 
 vi.mock("@hair-simo/core", () => ({
+  resolveTenantContext: async () => ({
+    tenantId: "cltenant00000000000000001",
+    slug: "hairsimo-brixen",
+    displayName: "Hair Simo",
+    timeZone: "Europe/Rome",
+    defaultLocale: "it",
+  }),
   PaymentService: class {
     confirmPayment = confirmPayment;
   },

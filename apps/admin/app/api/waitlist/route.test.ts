@@ -6,7 +6,24 @@ const mocks = vi.hoisted(() => ({
   createAuditLog: vi.fn(),
 }));
 
-vi.mock("@hair-simo/db", () => ({ prisma: { waitlist: { findMany: mocks.findMany } } }));
+vi.mock("@hair-simo/db", () => ({
+
+  DEFAULT_TENANT_ID: "cltenant00000000000000001",
+  DEFAULT_TENANT_SLUG: "hairsimo-brixen",
+  currentTenantId: () => "cltenant00000000000000001",
+  tenantEmailKey: (email: string) => ({ tenantId_email: { tenantId: "cltenant00000000000000001", email } }),
+  tenantPhoneKey: (phone: string) => ({ tenantId_phone: { tenantId: "cltenant00000000000000001", phone } }),
+  tenantSlugKey: (slug: string) => ({ tenantId_slug: { tenantId: "cltenant00000000000000001", slug } }),
+  tenantSkuKey: (sku: string) => ({ tenantId_sku: { tenantId: "cltenant00000000000000001", sku } }),
+  tenantCodeKey: (code: string) => ({ tenantId_code: { tenantId: "cltenant00000000000000001", code } }),
+  tenantDayOfWeekKey: (dayOfWeek: number) => ({ tenantId_dayOfWeek: { tenantId: "cltenant00000000000000001", dayOfWeek } }),
+  getTenantContext: () => undefined,
+  forEachActiveTenant: async (work: (ctx: { tenantId: string; slug: string }) => Promise<void>) => {
+    await work({ tenantId: "cltenant00000000000000001", slug: "hairsimo-brixen" });
+    return { tenantCount: 1 };
+  },
+
+  runWithTenantAsync: async (_ctx: unknown, fn: () => unknown) => fn(), prisma: { waitlist: { findMany: mocks.findMany } } }));
 
 vi.mock("@hair-simo/core", () => ({
   salonRepository: { createAuditLog: mocks.createAuditLog },
@@ -17,7 +34,9 @@ vi.mock("../../../lib/auth", () => ({
     const role = request.headers.get("x-test-role");
     if (!role) throw new Error("UNAUTHENTICATED");
     if (!allowed.includes(role)) throw new Error("FORBIDDEN");
-    return { userId: "usr_1", email: "owner@hairsimo.it", role };
+    return { userId: "usr_1", email: "owner@hairsimo.it", role,
+    tenantId: "cltenant00000000000000001",
+    tenantSlug: "hairsimo-brixen"};
   }),
 }));
 
