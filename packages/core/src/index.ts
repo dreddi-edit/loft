@@ -122,14 +122,36 @@ export class BookingEngine {
   }
 }
 
-export { AuthService, assertRole as assertAuthRole, hashPassword, type AuthSession } from "./auth-service";
+export {
+  ADMIN_ROLE_KEYS,
+  ADMIN_TOKEN_AUDIENCE,
+  ADMIN_TOKEN_TYPE,
+  AuthService,
+  TOKEN_ISSUER,
+  assertRole as assertAuthRole,
+  hashPassword,
+  resolveTokenSecret,
+  timingSafeStringEqual,
+  verifyAdminSessionToken,
+  verifyPassword,
+  type AdminTokenClaims,
+  type AuthSession,
+  type TokenSecretName,
+} from "./auth-service";
 export { BookingService } from "./booking-service";
 export { NotificationService } from "./notification-service";
 export { PaymentService } from "./payment-service";
 export { PricingService } from "./pricing-service";
 export { RefundService } from "./refund-service";
 export { ReminderService } from "./reminder-service";
-export { createAppointmentAccessToken, verifyAppointmentAccessToken } from "./appointment-token";
+export {
+  APPOINTMENT_TOKEN_AUDIENCE,
+  APPOINTMENT_TOKEN_TYPE,
+  createAppointmentAccessToken,
+  verifyAppointmentAccessToken,
+  type AppointmentAccessClaims,
+  type AppointmentAccessTokenInput,
+} from "./appointment-token";
 export { salonRepository } from "./repositories";
 export {
   SALON_TIME_ZONE,

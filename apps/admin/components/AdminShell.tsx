@@ -15,6 +15,14 @@ export default async function AdminShell({ children }: { children: ReactNode }) 
     return <>{children}</>;
   }
 
+  const firstName = session.firstName?.trim() ?? "";
+  const lastName = session.lastName?.trim() ?? "";
+  const email = session.email ?? "";
+  const displayName = [firstName, lastName].filter(Boolean).join(" ") || email || "Admin";
+  const initials =
+    `${firstName.slice(0, 1)}${lastName.slice(0, 1)}`.toUpperCase() ||
+    displayName.slice(0, 1).toUpperCase();
+
   return (
     <div className="admin-shell">
       <aside className="admin-sidebar">
@@ -24,9 +32,9 @@ export default async function AdminShell({ children }: { children: ReactNode }) 
         </div>
         <AdminNavigation locale={locale} />
         <div className="admin-sidebar-user">
-          <div>{session.firstName.slice(0, 1)}{session.lastName.slice(0, 1)}</div>
+          <div>{initials}</div>
           <span>
-            <strong>{session.firstName} {session.lastName}</strong>
+            <strong>{displayName}</strong>
             <small>{session.role}</small>
           </span>
           <LogoutButton label={adminT(locale, "logout")} />

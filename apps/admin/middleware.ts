@@ -3,6 +3,38 @@ import { jwtVerify } from "jose";
 
 const publicPaths = ["/login", "/api/auth/login"];
 
+// Duplicated from @hair-simo/core on purpose: the middleware runs in the Edge runtime and
+// cannot import the core package (Prisma, bcrypt, node:crypto). Keep in sync with
+// packages/core/src/auth-service.ts.
+const TOKEN_ISSUER = "hair-simo";
+const ADMIN_TOKEN_AUDIENCE = "hair-simo-admin";
+const ADMIN_TOKEN_TYPE = "admin-session";
+const ADMIN_ROLES = new Set(["owner", "manager", "staff"]);
+const CLOCK_TOLERANCE_SECONDS = 30;
+
+function getAdminSecret() {
+  const secret = process.env.ADMIN_JWT_SECRET ?? process.env.JWT_SECRET;
+  if (!secret) return null;
+  return new TextEncoder().encode(secret);
+}
+
+async function hasValidAdminToken(token: string | undefined) {
+  const secret = getAdminSecret();
+  if (!token || !secret) return false;
+  try {
+    const { payload } = await jwtVerify(token, secret, {
+      algorithms: ["HS256"],
+      issuer: TOKEN_ISSUER,
+      audience: ADMIN_TOKEN_AUDIENCE,
+      clockTolerance: CLOCK_TOLERANCE_SECONDS,
+    });
+    if (payload.typ !== ADMIN_TOKEN_TYPE) return false;
+    return typeof payload.role === "string" && ADMIN_ROLES.has(payload.role);
+  } catch {
+    return false;
+  }
+}
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   if (publicPaths.some((path) => pathname.startsWith(path))) {
@@ -12,17 +44,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const token = request.cookies.get("admin_token")?.value;
-  let valid = false;
-
-  if (token && process.env.JWT_SECRET) {
-    try {
-      await jwtVerify(token, new TextEncoder().encode(process.env.JWT_SECRET));
-      valid = true;
-    } catch {
-      valid = false;
-    }
-  }
+  const valid = await hasValidAdminToken(request.cookies.get("admin_token")?.value);
 
   if (!valid) {
     if (pathname.startsWith("/api/")) {
@@ -36,5 +58,8 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next|.*\\..*).*)"],
+  matcher: [
+    "/api/:path*",
+    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:css|js|map|ico|png|jpg|jpeg|gif|svg|webp|avif|woff|woff2|ttf|txt|xml|json)$).*)",
+  ],
 };

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { salonRepository } from "@hair-simo/core";
-import { getSession } from "../lib/auth";
+import { requireAdminPageSession } from "../lib/auth";
 import { AppointmentWorkspace } from "./AppointmentWorkspace";
 import { BusinessHoursEditor } from "./BusinessHoursEditor";
 import { CalendarWorkspace } from "./CalendarWorkspace";
@@ -14,8 +14,7 @@ import { ServiceEditor } from "./ServiceEditor";
 import { StaffWorkspace } from "./StaffWorkspace";
 
 export async function AdminSectionPage({ section }: { section: string }) {
-  const session = await getSession();
-  if (!session) redirect("/login");
+  await requireAdminPageSession();
 
   if (section === "dashboard") {
     const [stats, appointments, products] = await Promise.all([

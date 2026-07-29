@@ -98,6 +98,24 @@ resource "google_secret_manager_secret" "jwt_secret" {
   }
 }
 
+resource "google_secret_manager_secret" "admin_jwt_secret" {
+  secret_id = "hair-simo-admin-jwt-secret"
+  labels    = local.labels
+
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret" "appointment_token_secret" {
+  secret_id = "hair-simo-appointment-token-secret"
+  labels    = local.labels
+
+  replication {
+    auto {}
+  }
+}
+
 resource "google_secret_manager_secret" "payment_webhook_secret" {
   secret_id = "hair-simo-payment-webhook-secret"
   labels    = local.labels
@@ -331,6 +349,26 @@ resource "google_cloud_run_v2_service" "web" {
       }
 
       env {
+        name = "ADMIN_JWT_SECRET"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.admin_jwt_secret.secret_id
+            version = "latest"
+          }
+        }
+      }
+
+      env {
+        name = "APPOINTMENT_TOKEN_SECRET"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.appointment_token_secret.secret_id
+            version = "latest"
+          }
+        }
+      }
+
+      env {
         name = "GCP_CLOUD_TASKS_SECRET"
         value_source {
           secret_key_ref {
@@ -439,6 +477,26 @@ resource "google_cloud_run_v2_service" "admin" {
         value_source {
           secret_key_ref {
             secret  = google_secret_manager_secret.jwt_secret.secret_id
+            version = "latest"
+          }
+        }
+      }
+
+      env {
+        name = "ADMIN_JWT_SECRET"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.admin_jwt_secret.secret_id
+            version = "latest"
+          }
+        }
+      }
+
+      env {
+        name = "APPOINTMENT_TOKEN_SECRET"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.appointment_token_secret.secret_id
             version = "latest"
           }
         }
