@@ -13,7 +13,7 @@ type SendPayload = {
 
 async function sendViaPubSub(payload: SendPayload) {
   try {
-    const { publishNotificationEvent } = await import("@hair-simo/gcp");
+    const { publishNotificationEvent } = await import("@hair-simo/gcp/pubsub");
     const outboundChannel =
       payload.channel === "web" ? "email" : payload.channel === "voice" ? "sms" : payload.channel;
     const result = await publishNotificationEvent({
@@ -44,7 +44,7 @@ async function sendViaGmail(payload: SendPayload) {
   }
 
   try {
-    const { isGcpConfigured } = await import("@hair-simo/gcp");
+    const { isGcpConfigured } = await import("@hair-simo/gcp/config");
     if (!isGcpConfigured()) {
       console.info("[notification:email:local-gcp-missing]", {
         to: payload.recipient,
@@ -80,9 +80,13 @@ async function sendViaGmail(payload: SendPayload) {
   }
 }
 
-async function scheduleReminderTask(payload: SendPayload, appointmentId: string, delaySeconds: number) {
+async function scheduleReminderTask(
+  payload: SendPayload,
+  appointmentId: string,
+  delaySeconds: number,
+) {
   try {
-    const { enqueueTask } = await import("@hair-simo/gcp");
+    const { enqueueTask } = await import("@hair-simo/gcp/cloud-tasks");
     const result = await enqueueTask(
       {
         type: "notification.send",
@@ -108,7 +112,11 @@ export class NotificationService {
       if (emailResult.delivered) return emailResult;
     }
 
-    if (payload.channel === "sms" || payload.channel === "whatsapp" || payload.channel === "voice") {
+    if (
+      payload.channel === "sms" ||
+      payload.channel === "whatsapp" ||
+      payload.channel === "voice"
+    ) {
       return sendViaPubSub(payload);
     }
 
@@ -188,5 +196,37 @@ export class NotificationService {
       message,
       locale: input.locale,
     });
+  }
+
+  async retry(notificationId: string) {
+    const log = await prisma.notificationLog.findUnique({ where: { id: notificationId } });
+    if (!log) throw new Error("NOTIFICATION_NOT_FOUND");
+    const payload =
+      typeof log.payload === "object" && log.payload !== null && !Array.isArray(log.payload)
+        ? log.payload
+        : {};
+    const message = typeof payload.message === "string" ? payload.message : null;
+    if (!message) throw new Error("NOTIFICATION_PAYLOAD_INVALID");
+    const locale =
+      payload.locale === "de" ||
+      payload.locale === "it" ||
+      payload.locale === "fr" ||
+      payload.locale === "en"
+        ? payload.locale
+        : "en";
+    const delivery = await this.send({
+      channel: log.channel,
+      recipient: log.recipient,
+      message,
+      locale,
+    });
+    const record = await prisma.notificationLog.update({
+      where: { id: notificationId },
+      data: {
+        sentAt: delivery.delivered ? new Date() : null,
+        payload: { ...payload, delivery, retriedAt: new Date().toISOString() },
+      },
+    });
+    return { record, delivery };
   }
 }

@@ -5,13 +5,15 @@ import { BookingService } from "./booking-service";
 
 const bookingService = new BookingService();
 
-const checkoutSchema = z.object({
-  appointmentId: z.string().min(1),
-  serviceSlug: z.string().min(1),
-  mode: z.enum(["deposit", "full"]).default("deposit"),
-  depositPercentage: z.number().min(0).max(100).default(30),
-  customerEmail: z.string().email().optional(),
-});
+const checkoutSchema = z
+  .object({
+    appointmentId: z.string().min(1),
+    serviceSlug: z.string().min(1),
+    mode: z.enum(["deposit", "full"]).default("deposit"),
+    depositPercentage: z.number().min(0).max(100).default(30),
+    customerEmail: z.string().email().optional(),
+  })
+  .strict();
 
 export type GooglePayCheckoutResult = {
   provider: "google-pay";
@@ -47,11 +49,16 @@ export type GooglePayCheckoutResult = {
 };
 
 export class PaymentService {
-  async createCheckout(rawInput: unknown, pricing: { deposit: Money; fullPayment: Money }): Promise<GooglePayCheckoutResult> {
+  async createCheckout(
+    rawInput: unknown,
+    pricing: { deposit: Money; fullPayment: Money },
+  ): Promise<GooglePayCheckoutResult> {
     const input = checkoutSchema.parse(rawInput);
-    const amount = input.mode === "full" ? pricing.fullPayment.amountCents : pricing.deposit.amountCents;
+    const amount =
+      input.mode === "full" ? pricing.fullPayment.amountCents : pricing.deposit.amountCents;
     const merchantId = process.env.GCP_GOOGLE_PAY_MERCHANT_ID ?? "BCR2DN4TWOZ7XXXX";
-    const gatewayMerchantId = process.env.GCP_PAYMENT_GATEWAY_MERCHANT_ID ?? "exampleGatewayMerchantId";
+    const gatewayMerchantId =
+      process.env.GCP_PAYMENT_GATEWAY_MERCHANT_ID ?? "exampleGatewayMerchantId";
 
     const payment = await prisma.payment.create({
       data: {

@@ -62,11 +62,13 @@ Without `GCP_PROJECT_ID`, everything runs in local mode: regex AI, JWT auth, moc
 
 **Go-live:** See `docs/GO-LIVE.md` — only keys and GCP wiring needed, no code changes.
 
-### Demo admin credentials (seed)
+## Admin access (seed)
 
-- `owner@hairsimo.local` / `HairSimo2026!`
-- `manager@hairsimo.local` / `HairSimo2026!`
-- `staff@hairsimo.local` / `HairSimo2026!`
+Set `SEED_ADMIN_PASSWORD` in `.env`, then run `pnpm db:seed`.
+
+Team accounts:
+- `simona@hairsimo.it` (owner)
+- `daniela@hairsimo.it`, `helga@hairsimo.it`, `tina@hairsimo.it` (staff)
 
 ## Scripts
 

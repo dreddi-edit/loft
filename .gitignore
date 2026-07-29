@@ -1,8 +1,35 @@
+# dependencies
 node_modules
+
+# build output
 .next
 dist
 coverage
 .turbo
+
+# environment / secrets
 .env
-.env.local
-pnpm-lock.yaml
+.env.*
+!.env.example
+
+# terraform: state and local provider cache contain plaintext secrets
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# gcp credentials
+*-service-account.json
+gcp-key*.json
+application_default_credentials.json
+
+# os / editor
+.DS_Store
+*.swp

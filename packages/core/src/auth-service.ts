@@ -3,14 +3,18 @@ import { SignJWT, jwtVerify } from "jose";
 import { z } from "zod";
 import { prisma, type RoleKey } from "@hair-simo/db";
 
-const loginSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(8),
-});
+const loginSchema = z
+  .object({
+    email: z.string().email(),
+    password: z.string().min(8),
+  })
+  .strict();
 
-const firebaseLoginSchema = z.object({
-  idToken: z.string().min(1),
-});
+const firebaseLoginSchema = z
+  .object({
+    idToken: z.string().min(1),
+  })
+  .strict();
 
 export type AuthSession = {
   userId: string;
@@ -83,7 +87,7 @@ export class AuthService {
 
   async loginWithFirebase(rawInput: unknown) {
     const input = firebaseLoginSchema.parse(rawInput);
-    const { verifyIdToken, isIdentityPlatformConfigured } = await import("@hair-simo/gcp");
+    const { verifyIdToken, isIdentityPlatformConfigured } = await import("@hair-simo/gcp/identity-platform");
 
     if (!isIdentityPlatformConfigured()) {
       throw new Error("IDENTITY_PLATFORM_NOT_ENABLED");
@@ -113,7 +117,7 @@ export class AuthService {
   async verifyToken(token: string): Promise<AuthSession> {
     if (process.env.GCP_IDENTITY_PLATFORM_ENABLED === "true" && token.split(".").length === 3) {
       try {
-        const { verifyIdToken } = await import("@hair-simo/gcp");
+        const { verifyIdToken } = await import("@hair-simo/gcp/identity-platform");
         const identity = await verifyIdToken(token);
         const user = await prisma.user.findUnique({ where: { email: identity.email } });
         if (user) {

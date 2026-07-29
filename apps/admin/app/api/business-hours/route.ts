@@ -1,6 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { salonRepository } from "@hair-simo/core";
+import { z } from "zod";
 import { requireSession } from "../../../lib/auth";
+
+const schema = z
+  .object({
+    dayOfWeek: z.number().int().min(0).max(6),
+    startMin: z.number().int().min(0).max(1439),
+    endMin: z.number().int().min(1).max(1440),
+    isOpen: z.boolean(),
+  })
+  .strict()
+  .refine((input) => !input.isOpen || input.endMin > input.startMin, "INVALID_TIME_RANGE");
 
 export async function GET(request: NextRequest) {
   try {
@@ -8,22 +19,28 @@ export async function GET(request: NextRequest) {
     const hours = await salonRepository.listBusinessHours();
     return NextResponse.json({ data: hours });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "AUTH_ERROR" }, { status: 403 });
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "AUTH_ERROR" },
+      { status: 403 },
+    );
   }
 }
 
 export async function PUT(request: NextRequest) {
   try {
     await requireSession(request, ["owner", "manager"]);
-    const body = await request.json();
+    const input = schema.parse(await request.json());
     const updated = await salonRepository.upsertBusinessHours(
-      Number(body.dayOfWeek),
-      Number(body.startMin),
-      Number(body.endMin),
-      Boolean(body.isOpen),
+      input.dayOfWeek,
+      input.startMin,
+      input.endMin,
+      input.isOpen,
     );
     return NextResponse.json({ data: updated });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "UPDATE_FAILED" }, { status: 400 });
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "UPDATE_FAILED" },
+      { status: 400 },
+    );
   }
 }

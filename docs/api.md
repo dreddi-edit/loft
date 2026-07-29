@@ -22,7 +22,7 @@ Request (JSON):
 {
   "serviceSlug": "haircut-women",
   "startsAt": "2026-08-01T09:00:00.000Z",
-  "customerEmail": "maria@example.com",
+  "customerEmail": "cliente@example.com",
   "locale": "it",
   "sourceChannel": "web",
   "staffId": "optional-staff-id"

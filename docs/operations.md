@@ -85,7 +85,7 @@ Production: Identity Platform
 4. Admin login accepts Firebase `idToken`
 
 Local dev: JWT fallback
-- Seed users with password `HairSimo2026!`
+- Team accounts from seed (`simona@hairsimo.it`, etc.)
 - Set `JWT_SECRET` in `.env`
 
 ## 8) Notifications

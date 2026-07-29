@@ -1,11 +1,13 @@
 import { z } from "zod";
 import { prisma } from "@hair-simo/db";
 
-const refundSchema = z.object({
-  paymentId: z.string().min(1),
-  amountCents: z.number().int().positive().optional(),
-  reason: z.string().optional(),
-});
+const refundSchema = z
+  .object({
+    paymentId: z.string().trim().min(1),
+    amountCents: z.number().int().positive().optional(),
+    reason: z.string().trim().max(500).optional(),
+  })
+  .strict();
 
 export class RefundService {
   async createRefund(rawInput: unknown) {
@@ -25,11 +27,11 @@ export class RefundService {
     const providerRefId = `refund_${Date.now()}`;
 
     try {
-      const { publishNotificationEvent } = await import("@hair-simo/gcp");
+      const { publishNotificationEvent } = await import("@hair-simo/gcp/pubsub");
       await publishNotificationEvent({
         type: "appointment.confirmation",
         channel: "email",
-        recipient: "payments@hairsimo.local",
+        recipient: "info@hairsimo.it",
         locale: "en",
         payload: {
           action: "refund.request",

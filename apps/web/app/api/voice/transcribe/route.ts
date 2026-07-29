@@ -12,7 +12,7 @@ export async function POST(request: NextRequest) {
     const encoding = String(form.get("encoding") ?? "WEBM_OPUS") as "LINEAR16" | "OGG_OPUS" | "MP3" | "WEBM_OPUS";
     const sampleRateHertz = Number(form.get("sampleRateHertz") ?? 48000);
 
-    const { transcribeAudio } = await import("@hair-simo/gcp");
+    const { transcribeAudio } = await import("@hair-simo/gcp/speech-to-text");
     const result = await transcribeAudio({ audioContent: buffer, encoding, sampleRateHertz });
     return NextResponse.json({ data: result });
   } catch (error) {

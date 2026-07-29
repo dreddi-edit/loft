@@ -1,5 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-arm64-openssl-3.0.x", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
@@ -36,25 +37,32 @@ enum PaymentStatus {
   refunded
 }
 
+enum InventoryMovementType {
+  adjustment
+  purchase
+  sale
+  return
+}
+
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
+  id           String        @id @default(cuid())
+  email        String        @unique
   passwordHash String
   firstName    String
   lastName     String
-  locale       String   @default("en")
-  active       Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  locale       String        @default("en")
+  active       Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
   staffProfile StaffProfile?
   roles        UserRole[]
 }
 
 model Role {
-  id        String   @id @default(cuid())
-  key       RoleKey  @unique
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id        String     @id @default(cuid())
+  key       RoleKey    @unique
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
   users     UserRole[]
 }
 
@@ -66,42 +74,43 @@ model UserRole {
   updatedAt DateTime @updatedAt
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   role      Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
   @@unique([userId, roleId])
 }
 
 model StaffProfile {
-  id              String                 @id @default(cuid())
-  userId          String                 @unique
-  displayName     String
-  bio             String?
-  phone           String?
-  locale          String                 @default("en")
-  isBookable      Boolean                @default(true)
-  createdAt       DateTime               @default(now())
-  updatedAt       DateTime               @updatedAt
-  user            User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  staffServices   StaffService[]
-  availability    StaffAvailabilityRule[]
-  timeOffs        StaffTimeOff[]
-  appointments    Appointment[]
+  id            String                  @id @default(cuid())
+  userId        String                  @unique
+  displayName   String
+  bio           String?
+  phone         String?
+  locale        String                  @default("en")
+  isBookable    Boolean                 @default(true)
+  createdAt     DateTime                @default(now())
+  updatedAt     DateTime                @updatedAt
+  user          User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  staffServices StaffService[]
+  availability  StaffAvailabilityRule[]
+  timeOffs      StaffTimeOff[]
+  appointments  Appointment[]
 }
 
 model Customer {
-  id              String            @id @default(cuid())
-  email           String?           @unique
-  phone           String?           @unique
-  firstName       String
-  lastName        String
-  locale          String            @default("en")
-  sourceChannel   Channel           @default(web)
-  marketingOptIn  Boolean           @default(false)
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
-  notes           CustomerNote[]
-  appointments    Appointment[]
-  consents        ConsentRecord[]
-  conversations   Conversation[]
-  callLogs        CallLog[]
+  id             String          @id @default(cuid())
+  email          String?         @unique
+  phone          String?         @unique
+  firstName      String
+  lastName       String
+  locale         String          @default("en")
+  sourceChannel  Channel         @default(web)
+  marketingOptIn Boolean         @default(false)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  notes          CustomerNote[]
+  appointments   Appointment[]
+  consents       ConsentRecord[]
+  conversations  Conversation[]
+  callLogs       CallLog[]
 }
 
 model CustomerNote {
@@ -138,6 +147,7 @@ model ServiceTranslation {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   service     Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
   @@unique([serviceId, locale])
 }
 
@@ -149,6 +159,7 @@ model StaffService {
   updatedAt DateTime     @updatedAt
   staff     StaffProfile @relation(fields: [staffId], references: [id], onDelete: Cascade)
   service   Service      @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
   @@unique([staffId, serviceId])
 }
 
@@ -185,25 +196,25 @@ model StaffTimeOff {
 }
 
 model Appointment {
-  id                    String                     @id @default(cuid())
-  customerId            String
-  serviceId             String
-  staffId               String?
-  startsAt              DateTime
-  endsAt                DateTime
-  locale                String                     @default("en")
-  status                AppointmentStatus          @default(pending)
-  sourceChannel         Channel                    @default(web)
-  notes                 String?
-  cancellationReason    String?
-  createdAt             DateTime                   @default(now())
-  updatedAt             DateTime                   @updatedAt
-  customer              Customer                   @relation(fields: [customerId], references: [id])
-  service               Service                    @relation(fields: [serviceId], references: [id])
-  staff                 StaffProfile?              @relation(fields: [staffId], references: [id])
-  statusHistory         AppointmentStatusHistory[]
-  payments              Payment[]
-  notifications         NotificationLog[]
+  id                 String                     @id @default(cuid())
+  customerId         String
+  serviceId          String
+  staffId            String?
+  startsAt           DateTime
+  endsAt             DateTime
+  locale             String                     @default("en")
+  status             AppointmentStatus          @default(pending)
+  sourceChannel      Channel                    @default(web)
+  notes              String?
+  cancellationReason String?
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
+  customer           Customer                   @relation(fields: [customerId], references: [id])
+  service            Service                    @relation(fields: [serviceId], references: [id])
+  staff              StaffProfile?              @relation(fields: [staffId], references: [id])
+  statusHistory      AppointmentStatusHistory[]
+  payments           Payment[]
+  notifications      NotificationLog[]
 }
 
 model AppointmentStatusHistory {
@@ -244,15 +255,15 @@ model Refund {
 }
 
 model Conversation {
-  id            String   @id @default(cuid())
-  customerId    String?
-  channel       Channel
-  locale        String   @default("en")
-  externalRef   String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  customer      Customer? @relation(fields: [customerId], references: [id])
-  messages      Message[]
+  id          String    @id @default(cuid())
+  customerId  String?
+  channel     Channel
+  locale      String    @default("en")
+  externalRef String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  customer    Customer? @relation(fields: [customerId], references: [id])
+  messages    Message[]
 }
 
 model Message {
@@ -267,29 +278,29 @@ model Message {
 }
 
 model CallLog {
-  id            String   @id @default(cuid())
-  customerId    String?
-  locale        String   @default("en")
-  fromNumber    String?
-  toNumber      String?
-  summary       String
-  actionTaken   String
-  fallback      Boolean  @default(false)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  customer      Customer? @relation(fields: [customerId], references: [id])
+  id          String    @id @default(cuid())
+  customerId  String?
+  locale      String    @default("en")
+  fromNumber  String?
+  toNumber    String?
+  summary     String
+  actionTaken String
+  fallback    Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  customer    Customer? @relation(fields: [customerId], references: [id])
 }
 
 model NotificationLog {
-  id            String      @id @default(cuid())
+  id            String       @id @default(cuid())
   appointmentId String?
   channel       Channel
   recipient     String
   templateKey   String
   payload       Json
   sentAt        DateTime?
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
   appointment   Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
 }
 
@@ -306,21 +317,35 @@ model ConsentRecord {
 }
 
 model InventoryItem {
-  id          String   @id @default(cuid())
-  sku         String   @unique
-  name        String
-  quantity    Int      @default(0)
-  reorderAt   Int      @default(5)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id        String   @id @default(cuid())
+  sku       String   @unique
+  name      String
+  quantity  Int      @default(0)
+  reorderAt Int      @default(5)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Product {
-  id          String   @id @default(cuid())
-  sku         String   @unique
-  name        String
-  priceCents  Int
-  stock       Int      @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id                 String              @id @default(cuid())
+  sku                String              @unique
+  name               String
+  priceCents         Int
+  stock              Int                 @default(0)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  inventoryMovements InventoryMovement[]
+}
+
+model InventoryMovement {
+  id           String                @id @default(cuid())
+  productId    String
+  type         InventoryMovementType @default(adjustment)
+  delta        Int
+  balanceAfter Int
+  reason       String                @default("")
+  createdAt    DateTime              @default(now())
+  product      Product               @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId, createdAt])
 }

@@ -20,7 +20,7 @@ Verify:
 - [ ] Website: http://localhost:3000/de
 - [ ] Booking wizard: full flow including **Simulate payment**
 - [ ] Chat widget: text + voice simulator tabs
-- [ ] Admin: http://localhost:3001/login (`owner@hairsimo.local` / `HairSimo2026!`)
+- [ ] Admin: http://localhost:3001/login (team account from seed)
 - [ ] `pnpm lint && pnpm typecheck && pnpm test && pnpm build`
 
 ---

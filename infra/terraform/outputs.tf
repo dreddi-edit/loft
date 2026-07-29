@@ -7,7 +7,7 @@ output "admin_service_url" {
 }
 
 output "alloydb_cluster" {
-  value = google_alloydb_cluster.primary.name
+  value = var.enable_alloydb ? google_alloydb_cluster.primary[0].name : null
 }
 
 output "pubsub_topic" {
@@ -19,7 +19,7 @@ output "cloud_tasks_queue" {
 }
 
 output "load_balancer_ip" {
-  value = google_compute_global_address.web_ip.address
+  value = var.enable_load_balancer ? google_compute_global_address.web_ip[0].address : null
 }
 
 output "artifact_registry" {

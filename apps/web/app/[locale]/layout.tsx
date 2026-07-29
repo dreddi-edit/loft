@@ -15,7 +15,7 @@ export default async function LocaleLayout({ children, params }: LocaleLayoutPro
   return (
     <>
       <SiteHeader locale={locale} />
-      <main style={{ minHeight: "60vh" }}>{children}</main>
+      <main>{children}</main>
       <SiteFooter locale={locale} />
       <ChatWidget locale={locale} />
       <CookieBanner locale={locale} />
@@ -31,6 +31,10 @@ export async function generateMetadata({ params }: { params: Promise<{ locale: s
   const locale = resolveLocale((await params).locale);
   return {
     title: `Hair Simo - ${locale.toUpperCase()}`,
+    icons: {
+      icon: "/favicon.ico",
+      apple: "/brand/logo-md.png",
+    },
     alternates: {
       languages: {
         de: "/de",

@@ -5,12 +5,9 @@ import { aiTools } from "../../../../lib/ai-tools";
 
 export async function POST(request: NextRequest) {
   try {
-    const {
-      parseDialogflowWebhook,
-      buildDialogflowPlayAudioResponse,
-      buildDialogflowResponse,
-      synthesizeSpeechBase64,
-    } = await import("@hair-simo/gcp");
+    const { parseDialogflowWebhook, buildDialogflowPlayAudioResponse, buildDialogflowResponse } =
+      await import("@hair-simo/gcp/dialogflow");
+    const { synthesizeSpeechBase64 } = await import("@hair-simo/gcp/text-to-speech");
 
     const body = await request.json();
     const parsed = parseDialogflowWebhook(body);
@@ -20,7 +17,7 @@ export async function POST(request: NextRequest) {
       {
         text: parsed.text,
         locale: parsed.locale,
-        serviceId: String(parsed.parameters.serviceId ?? "haircut-women"),
+        serviceId: String(parsed.parameters.serviceId ?? "damen-schnitt"),
         appointmentId: parsed.parameters.appointmentId ? String(parsed.parameters.appointmentId) : undefined,
       },
       aiTools,
@@ -53,7 +50,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(response);
   } catch {
-    const { buildDialogflowResponse } = await import("@hair-simo/gcp");
+    const { buildDialogflowResponse } = await import("@hair-simo/gcp/dialogflow");
     const fallback = buildDialogflowResponse(
       "An error occurred. Please try again or call us directly.",
     );

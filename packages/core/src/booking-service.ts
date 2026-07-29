@@ -1,21 +1,30 @@
 import { addHours, addMinutes, endOfDay, startOfDay } from "date-fns";
 import { z } from "zod";
-import { buildSlotsForWindow, intersectWindows, mergeUniqueSlots, minutesToDate } from "./availability-engine";
+import {
+  buildSlotsForWindow,
+  intersectWindows,
+  mergeUniqueSlots,
+  minutesToDate,
+} from "./availability-engine";
 import { salonRepository } from "./repositories";
 
-const bookingRequestSchema = z.object({
-  serviceSlug: z.string().min(1),
-  startsAt: z.string().datetime(),
-  customerEmail: z.string().email(),
-  customerFirstName: z.string().min(1).optional(),
-  customerLastName: z.string().min(1).optional(),
-  customerPhone: z.string().optional(),
-  locale: z.enum(["de", "it", "fr", "en"]).default("en"),
-  sourceChannel: z.enum(["web", "whatsapp", "sms", "voice"]).default("web"),
-  staffId: z.string().optional(),
-  marketingOptIn: z.boolean().optional(),
-  termsAccepted: z.boolean().optional(),
-});
+const bookingRequestSchema = z
+  .object({
+    serviceSlug: z.string().trim().min(1).max(100),
+    startsAt: z.string().datetime(),
+    customerEmail: z.string().trim().email().max(254),
+    customerFirstName: z.string().trim().min(1).max(100).optional(),
+    customerLastName: z.string().trim().min(1).max(100).optional(),
+    customerPhone: z.string().trim().max(30).optional(),
+    locale: z.enum(["de", "it", "fr", "en"]).default("en"),
+    sourceChannel: z.enum(["web", "whatsapp", "sms", "voice"]).default("web"),
+    staffId: z.string().trim().min(1).optional(),
+    marketingOptIn: z.boolean().optional(),
+    termsAccepted: z.literal(true),
+  })
+  .strict();
+
+const rescheduleSchema = z.string().datetime();
 
 export class BookingService {
   private async getEligibleStaff(serviceId: string, staffId?: string) {
@@ -34,6 +43,7 @@ export class BookingService {
     service: { durationMin: number; bufferAfterMin: number },
     staffId: string,
     day: Date,
+    excludeAppointmentId?: string,
   ) {
     const dayStart = startOfDay(day);
     const dayEnd = endOfDay(day);
@@ -58,7 +68,12 @@ export class BookingService {
     if (staffDayRules.length === 0) return [];
 
     const blocked = [
-      ...appointments.map((item) => ({ startsAt: item.startsAt, endsAt: item.endsAt })),
+      ...appointments
+        .filter((item) => item.id !== excludeAppointmentId)
+        .map((item) => ({
+          startsAt: item.startsAt,
+          endsAt: addMinutes(item.endsAt, item.service.bufferAfterMin),
+        })),
       ...timeOffs.map((item) => ({ startsAt: item.startsAt, endsAt: item.endsAt })),
     ];
 
@@ -79,6 +94,21 @@ export class BookingService {
     });
 
     return mergeUniqueSlots(slots);
+  }
+
+  private async isStaffAvailable(
+    service: { durationMin: number; bufferAfterMin: number },
+    staffId: string,
+    startsAt: Date,
+    excludeAppointmentId?: string,
+  ) {
+    const slots = await this.getAvailabilityForStaff(
+      service,
+      staffId,
+      startsAt,
+      excludeAppointmentId,
+    );
+    return slots.some((slot) => slot.startsAt.getTime() === startsAt.getTime());
   }
 
   async getAvailability(serviceSlug: string, dayIso: string, staffId?: string) {
@@ -102,31 +132,22 @@ export class BookingService {
 
   async createBooking(rawInput: unknown) {
     const input = bookingRequestSchema.parse(rawInput);
-    if (input.termsAccepted === false) throw new Error("TERMS_NOT_ACCEPTED");
-
     const service = await salonRepository.findServiceBySlug(input.serviceSlug);
     if (!service) throw new Error("SERVICE_NOT_FOUND");
 
     const startsAt = new Date(input.startsAt);
     const endsAt = addMinutes(startsAt, service.durationMin);
+    const blockedEndsAt = addMinutes(endsAt, service.bufferAfterMin);
+    if (startsAt <= new Date()) throw new Error("SLOT_NOT_AVAILABLE");
 
     const eligibleStaff = await this.getEligibleStaff(service.id, input.staffId);
     if (eligibleStaff.length === 0) throw new Error("STAFF_NOT_ELIGIBLE");
 
-    let assignedStaffId = input.staffId;
-    if (!assignedStaffId) {
-      for (const member of eligibleStaff) {
-        const conflict = await salonRepository.listBlockedAppointments(member.id, startsAt, endsAt);
-        if (conflict.length === 0) {
-          assignedStaffId = member.id;
-          break;
-        }
-      }
-      if (!assignedStaffId) throw new Error("SLOT_NOT_AVAILABLE");
-    } else {
-      const conflict = await salonRepository.listBlockedAppointments(assignedStaffId, startsAt, endsAt);
-      if (conflict.length > 0) throw new Error("SLOT_NOT_AVAILABLE");
+    const availableStaff = [];
+    for (const member of eligibleStaff) {
+      if (await this.isStaffAvailable(service, member.id, startsAt)) availableStaff.push(member.id);
     }
+    if (availableStaff.length === 0) throw new Error("SLOT_NOT_AVAILABLE");
 
     const customer = await salonRepository.findOrCreateCustomerByEmail(
       input.customerEmail,
@@ -141,42 +162,73 @@ export class BookingService {
 
     if (input.marketingOptIn !== undefined) {
       await salonRepository.updateCustomer(customer.id, { marketingOptIn: input.marketingOptIn });
-      await salonRepository.recordConsent(customer.id, "marketing", input.marketingOptIn, "booking");
+      await salonRepository.recordConsent(
+        customer.id,
+        "marketing",
+        input.marketingOptIn,
+        "booking",
+      );
     }
 
     await salonRepository.recordConsent(customer.id, "terms", true, "booking");
 
-    return salonRepository.createAppointment({
-      customerId: customer.id,
-      serviceId: service.id,
-      staffId: assignedStaffId,
-      startsAt,
-      endsAt,
-      locale: input.locale,
-      sourceChannel: input.sourceChannel,
-    });
+    for (const staffId of availableStaff) {
+      try {
+        return await salonRepository.createAppointmentIfAvailable({
+          customerId: customer.id,
+          serviceId: service.id,
+          staffId,
+          startsAt,
+          endsAt,
+          blockedEndsAt,
+          locale: input.locale,
+          sourceChannel: input.sourceChannel,
+        });
+      } catch (error) {
+        if (error instanceof Error && error.message === "SLOT_NOT_AVAILABLE" && !input.staffId)
+          continue;
+        throw error;
+      }
+    }
+    throw new Error("SLOT_NOT_AVAILABLE");
   }
 
   async reschedule(appointmentId: string, startsAtIso: string) {
+    rescheduleSchema.parse(startsAtIso);
     const appointment = await salonRepository.findAppointmentById(appointmentId);
     if (!appointment) throw new Error("APPOINTMENT_NOT_FOUND");
     const startsAt = new Date(startsAtIso);
     const endsAt = addMinutes(startsAt, appointment.service.durationMin);
+    const blockedEndsAt = addMinutes(endsAt, appointment.service.bufferAfterMin);
+    if (startsAt <= new Date()) throw new Error("SLOT_NOT_AVAILABLE");
 
-    if (appointment.staffId) {
-      const eligible = await this.getEligibleStaff(appointment.serviceId, appointment.staffId);
-      if (eligible.length === 0) throw new Error("STAFF_NOT_ELIGIBLE");
-    }
-
-    const conflict = await salonRepository.listBlockedAppointments(
+    const eligible = await this.getEligibleStaff(
+      appointment.serviceId,
       appointment.staffId ?? undefined,
-      startsAt,
-      endsAt,
     );
-    if (conflict.some((item) => item.id !== appointmentId)) {
-      throw new Error("SLOT_NOT_AVAILABLE");
+    for (const member of eligible) {
+      if (!(await this.isStaffAvailable(appointment.service, member.id, startsAt, appointmentId))) {
+        continue;
+      }
+      try {
+        return await salonRepository.rescheduleAppointmentIfAvailable(
+          appointmentId,
+          member.id,
+          startsAt,
+          endsAt,
+          blockedEndsAt,
+        );
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message === "SLOT_NOT_AVAILABLE" &&
+          !appointment.staffId
+        )
+          continue;
+        throw error;
+      }
     }
-    return salonRepository.rescheduleAppointment(appointmentId, startsAt, endsAt);
+    throw new Error("SLOT_NOT_AVAILABLE");
   }
 
   async cancel(appointmentId: string, reason: string) {

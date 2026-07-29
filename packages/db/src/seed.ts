@@ -1,13 +1,18 @@
-import { PrismaClient, type RoleKey } from "@prisma/client";
+import { type RoleKey } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { prisma } from "./client";
 
-const prisma = new PrismaClient();
 const locales = ["de", "it", "fr", "en"] as const;
-const DEMO_PASSWORD = "HairSimo2026!";
+
+const team = [
+  { email: "simona@hairsimo.it", firstName: "Simona", lastName: "", role: "owner" as RoleKey, locale: "it" },
+  { email: "daniela@hairsimo.it", firstName: "Daniela", lastName: "", role: "staff" as RoleKey, locale: "it" },
+  { email: "helga@hairsimo.it", firstName: "Helga", lastName: "", role: "staff" as RoleKey, locale: "de" },
+  { email: "tina@hairsimo.it", firstName: "Tina", lastName: "", role: "staff" as RoleKey, locale: "de" },
+];
 
 async function seedRoles() {
-  const roleKeys: RoleKey[] = ["owner", "manager", "staff"];
-  for (const key of roleKeys) {
+  for (const key of ["owner", "manager", "staff"] as RoleKey[]) {
     await prisma.role.upsert({
       where: { key },
       update: {},
@@ -19,39 +24,63 @@ async function seedRoles() {
 async function seedServices() {
   const baseServices = [
     {
-      slug: "haircut-women",
+      slug: "balayage-straehnen",
+      category: "color",
+      durationMin: 150,
+      priceCents: 12000,
+      translations: {
+        de: { name: "Balayage & Strähnchen", description: "Natürliche Farbverläufe und individuelle Highlights." },
+        it: { name: "Balayage e colpi di sole", description: "Sfumature naturali e riflessi personalizzati." },
+        fr: { name: "Balayage & mèches", description: "Dégradés naturels et reflets personnalisés." },
+        en: { name: "Balayage & highlights", description: "Natural color transitions and personalized highlights." },
+      },
+    },
+    {
+      slug: "damen-schnitt",
       category: "cut",
       durationMin: 60,
-      priceCents: 6500,
+      priceCents: 4500,
       translations: {
-        de: { name: "Damenhaarschnitt", description: "Waschen, schneiden, föhnen." },
+        de: { name: "Damenhaarschnitt", description: "Waschen, Schneiden und Föhnen." },
         it: { name: "Taglio donna", description: "Lavaggio, taglio e piega." },
         fr: { name: "Coupe femme", description: "Shampooing, coupe et brushing." },
-        en: { name: "Women's haircut", description: "Wash, cut and blow-dry." },
+        en: { name: "Women's haircut", description: "Wash, cut, and blow-dry." },
       },
     },
     {
-      slug: "color-root-touchup",
-      category: "color",
-      durationMin: 90,
-      priceCents: 8900,
-      translations: {
-        de: { name: "Ansatzfarbe", description: "Färbung für den Ansatz." },
-        it: { name: "Ritocco radice", description: "Colorazione ricrescita." },
-        fr: { name: "Retouche racines", description: "Coloration des racines." },
-        en: { name: "Root touch-up", description: "Hair root coloring service." },
-      },
-    },
-    {
-      slug: "mens-cut",
+      slug: "herren-schnitt",
       category: "cut",
       durationMin: 45,
-      priceCents: 4500,
+      priceCents: 3000,
       translations: {
         de: { name: "Herrenhaarschnitt", description: "Präziser Schnitt und Styling." },
         it: { name: "Taglio uomo", description: "Taglio preciso e styling." },
         fr: { name: "Coupe homme", description: "Coupe précise et coiffage." },
         en: { name: "Men's haircut", description: "Precise cut and styling." },
+      },
+    },
+    {
+      slug: "kinder-schnitt",
+      category: "cut",
+      durationMin: 30,
+      priceCents: 2500,
+      translations: {
+        de: { name: "Kinderhaarschnitt", description: "Sanfter Schnitt für die Kleinsten." },
+        it: { name: "Taglio bambini", description: "Taglio delicato per i più piccoli." },
+        fr: { name: "Coupe enfant", description: "Coupe douce pour les plus jeunes." },
+        en: { name: "Children's haircut", description: "Gentle cut for kids." },
+      },
+    },
+    {
+      slug: "behandlung",
+      category: "treatment",
+      durationMin: 90,
+      priceCents: 6500,
+      translations: {
+        de: { name: "Haarbehandlung", description: "Keratin, Masken und Pflege mit Vaporizer." },
+        it: { name: "Trattamento capelli", description: "Cheratina, maschere e cura con vaporizzatore." },
+        fr: { name: "Soin capillaire", description: "Kératine, masques et soin au vaporisateur." },
+        en: { name: "Hair treatment", description: "Keratin, masks, and vaporizer care." },
       },
     },
   ];
@@ -86,158 +115,143 @@ async function seedServices() {
 async function seedBusinessHours() {
   await prisma.businessHours.deleteMany();
   const ranges = [
-    { id: "day-1", dayOfWeek: 1, startMin: 9 * 60, endMin: 18 * 60, isOpen: true },
-    { id: "day-2", dayOfWeek: 2, startMin: 9 * 60, endMin: 18 * 60, isOpen: true },
-    { id: "day-3", dayOfWeek: 3, startMin: 9 * 60, endMin: 18 * 60, isOpen: true },
-    { id: "day-4", dayOfWeek: 4, startMin: 9 * 60, endMin: 20 * 60, isOpen: true },
-    { id: "day-5", dayOfWeek: 5, startMin: 9 * 60, endMin: 20 * 60, isOpen: true },
-    { id: "day-6", dayOfWeek: 6, startMin: 8 * 60, endMin: 16 * 60, isOpen: true },
     { id: "day-0", dayOfWeek: 0, startMin: 0, endMin: 0, isOpen: false },
+    { id: "day-1", dayOfWeek: 1, startMin: 0, endMin: 0, isOpen: false },
+    { id: "day-2", dayOfWeek: 2, startMin: 8 * 60, endMin: 17 * 60, isOpen: true },
+    { id: "day-3", dayOfWeek: 3, startMin: 8 * 60, endMin: 16 * 60, isOpen: true },
+    { id: "day-4", dayOfWeek: 4, startMin: 8 * 60, endMin: 17 * 60, isOpen: true },
+    { id: "day-5", dayOfWeek: 5, startMin: 8 * 60, endMin: 17 * 60, isOpen: true },
+    { id: "day-6", dayOfWeek: 6, startMin: 8 * 60, endMin: 16 * 60, isOpen: true },
   ];
   await prisma.businessHours.createMany({ data: ranges });
 }
 
-async function seedStaffAndCustomer(passwordHash: string) {
-  const ownerRole = await prisma.role.findUniqueOrThrow({ where: { key: "owner" } });
-  const managerRole = await prisma.role.findUniqueOrThrow({ where: { key: "manager" } });
-  const staffRole = await prisma.role.findUniqueOrThrow({ where: { key: "staff" } });
-
-  const owner = await prisma.user.upsert({
-    where: { email: "owner@hairsimo.local" },
-    update: { passwordHash },
-    create: {
-      email: "owner@hairsimo.local",
-      passwordHash,
-      firstName: "Simo",
-      lastName: "Owner",
-      locale: "de",
-    },
+async function removeLegacyDemoData() {
+  await prisma.customer.deleteMany({
+    where: { email: { in: ["maria@example.com"] } },
   });
-
-  const manager = await prisma.user.upsert({
-    where: { email: "manager@hairsimo.local" },
-    update: { passwordHash },
-    create: {
-      email: "manager@hairsimo.local",
-      passwordHash,
-      firstName: "Marco",
-      lastName: "Manager",
-      locale: "it",
-    },
-  });
-
-  const staff = await prisma.user.upsert({
-    where: { email: "staff@hairsimo.local" },
-    update: { passwordHash },
-    create: {
-      email: "staff@hairsimo.local",
-      passwordHash,
-      firstName: "Giulia",
-      lastName: "Stylist",
-      locale: "it",
-    },
-  });
-
-  await prisma.staffProfile.upsert({
-    where: { userId: owner.id },
-    update: { displayName: "Simo" },
-    create: { userId: owner.id, displayName: "Simo", locale: "de" },
-  });
-
-  const staffProfile = await prisma.staffProfile.upsert({
-    where: { userId: staff.id },
-    update: { displayName: "Giulia" },
-    create: { userId: staff.id, displayName: "Giulia", locale: "it" },
-    include: { user: true },
-  });
-
-  const services = await prisma.service.findMany();
-  for (const service of services) {
-    await prisma.staffService.upsert({
-      where: { staffId_serviceId: { staffId: staffProfile.id, serviceId: service.id } },
-      update: {},
-      create: { staffId: staffProfile.id, serviceId: service.id },
-    });
-  }
-
-  for (const dayOfWeek of [1, 2, 3, 4, 5]) {
-    await prisma.staffAvailabilityRule.upsert({
-      where: { id: `${staffProfile.id}-${dayOfWeek}` },
-      update: {},
-      create: {
-        id: `${staffProfile.id}-${dayOfWeek}`,
-        staffId: staffProfile.id,
-        dayOfWeek,
-        startMin: 9 * 60,
-        endMin: 18 * 60,
+  await prisma.user.deleteMany({
+    where: {
+      email: {
+        in: [
+          "owner@hairsimo.local",
+          "manager@hairsimo.local",
+          "staff@hairsimo.local",
+        ],
       },
-    });
-  }
-
-  await prisma.userRole.upsert({
-    where: { userId_roleId: { userId: owner.id, roleId: ownerRole.id } },
-    update: {},
-    create: { userId: owner.id, roleId: ownerRole.id },
-  });
-  await prisma.userRole.upsert({
-    where: { userId_roleId: { userId: manager.id, roleId: managerRole.id } },
-    update: {},
-    create: { userId: manager.id, roleId: managerRole.id },
-  });
-  await prisma.userRole.upsert({
-    where: { userId_roleId: { userId: staff.id, roleId: staffRole.id } },
-    update: {},
-    create: { userId: staff.id, roleId: staffRole.id },
-  });
-
-  const customer = await prisma.customer.upsert({
-    where: { email: "maria@example.com" },
-    update: {},
-    create: {
-      email: "maria@example.com",
-      phone: "+41790000000",
-      firstName: "Maria",
-      lastName: "Rossi",
-      locale: "it",
-      sourceChannel: "web",
-      marketingOptIn: true,
     },
   });
-
-  await prisma.consentRecord.upsert({
-    where: { id: "consent-maria-marketing" },
-    update: { granted: true },
-    create: {
-      id: "consent-maria-marketing",
-      customerId: customer.id,
-      type: "marketing",
-      granted: true,
-      source: "web-booking",
-    },
+  await prisma.service.deleteMany({
+    where: { slug: { in: ["haircut-women", "color-root-touchup", "mens-cut"] } },
+  });
+  await prisma.product.deleteMany({
+    where: { sku: { in: ["PROD-ARGAN-50"] } },
+  });
+  await prisma.inventoryItem.deleteMany({
+    where: { sku: { in: ["SHAMPOO-001"] } },
   });
 }
 
-async function seedInventory() {
-  await prisma.inventoryItem.upsert({
-    where: { sku: "SHAMPOO-001" },
-    update: { quantity: 10 },
-    create: { sku: "SHAMPOO-001", name: "Hydrating Shampoo", quantity: 10 },
-  });
-  await prisma.product.upsert({
-    where: { sku: "PROD-ARGAN-50" },
-    update: { stock: 5 },
-    create: { sku: "PROD-ARGAN-50", name: "Argan Repair Oil", priceCents: 2900, stock: 5 },
-  });
+async function seedTeam(passwordHash: string) {
+  const services = await prisma.service.findMany();
+  const roles = Object.fromEntries(
+    (await prisma.role.findMany()).map((role) => [role.key, role.id]),
+  ) as Record<RoleKey, string>;
+
+  for (const member of team) {
+    const user = await prisma.user.upsert({
+      where: { email: member.email },
+      update: {
+        passwordHash,
+        firstName: member.firstName,
+        lastName: member.lastName,
+        locale: member.locale,
+        active: true,
+      },
+      create: {
+        email: member.email,
+        passwordHash,
+        firstName: member.firstName,
+        lastName: member.lastName,
+        locale: member.locale,
+      },
+    });
+
+    const staffProfile = await prisma.staffProfile.upsert({
+      where: { userId: user.id },
+      update: {
+        displayName: member.firstName,
+        locale: member.locale,
+        isBookable: true,
+      },
+      create: {
+        userId: user.id,
+        displayName: member.firstName,
+        locale: member.locale,
+        isBookable: true,
+      },
+    });
+
+    for (const service of services) {
+      await prisma.staffService.upsert({
+        where: { staffId_serviceId: { staffId: staffProfile.id, serviceId: service.id } },
+        update: {},
+        create: { staffId: staffProfile.id, serviceId: service.id },
+      });
+    }
+
+    for (const dayOfWeek of [2, 3, 4, 5, 6]) {
+      const endMin = dayOfWeek === 3 || dayOfWeek === 6 ? 16 * 60 : 17 * 60;
+      await prisma.staffAvailabilityRule.upsert({
+        where: { id: `${staffProfile.id}-${dayOfWeek}` },
+        update: { startMin: 8 * 60, endMin },
+        create: {
+          id: `${staffProfile.id}-${dayOfWeek}`,
+          staffId: staffProfile.id,
+          dayOfWeek,
+          startMin: 8 * 60,
+          endMin,
+        },
+      });
+    }
+
+    await prisma.userRole.deleteMany({ where: { userId: user.id } });
+    await prisma.userRole.create({
+      data: { userId: user.id, roleId: roles[member.role] },
+    });
+  }
+}
+
+async function seedProducts() {
+  const products = [
+    { sku: "DAVINES-OI-SHAMPOO", name: "Davines OI Shampoo", priceCents: 2800, stock: 12 },
+    { sku: "DAVINES-OI-MASK", name: "Davines OI Hair Butter", priceCents: 3400, stock: 10 },
+    { sku: "DAVINES-LOVE-SPRAY", name: "Davines Love Curl Spray", priceCents: 2600, stock: 8 },
+  ];
+
+  for (const product of products) {
+    await prisma.product.upsert({
+      where: { sku: product.sku },
+      update: product,
+      create: product,
+    });
+  }
 }
 
 async function main() {
-  const passwordHash = await bcrypt.hash(DEMO_PASSWORD, 12);
+  const password = process.env.SEED_ADMIN_PASSWORD;
+  if (!password || password.length < 12) {
+    throw new Error("SEED_ADMIN_PASSWORD must be set (min 12 chars) before seeding.");
+  }
+
+  const passwordHash = await bcrypt.hash(password, 12);
+  await removeLegacyDemoData();
   await seedRoles();
   await seedServices();
   await seedBusinessHours();
-  await seedStaffAndCustomer(passwordHash);
-  await seedInventory();
-  console.info(`Seed complete. Demo password for all users: ${DEMO_PASSWORD}`);
+  await seedTeam(passwordHash);
+  await seedProducts();
+  console.info("Seed complete for Hair Simo Bressanone.");
 }
 
 main()

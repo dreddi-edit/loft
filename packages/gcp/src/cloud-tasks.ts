@@ -1,19 +1,10 @@
-import { CloudTasksClient } from "@google-cloud/tasks";
+import { getGcpAccessToken } from "./access-token";
 import { getGcpConfig, isGcpConfigured } from "./config";
 
 export type TaskPayload = {
   type: string;
   data: Record<string, unknown>;
 };
-
-let tasksClient: CloudTasksClient | null = null;
-
-function getClient(): CloudTasksClient {
-  if (!tasksClient) {
-    tasksClient = new CloudTasksClient();
-  }
-  return tasksClient;
-}
 
 export async function enqueueTask(payload: TaskPayload, scheduleSeconds = 0): Promise<{ enqueued: boolean; taskName?: string }> {
   if (!isGcpConfigured()) {
@@ -28,15 +19,15 @@ export async function enqueueTask(payload: TaskPayload, scheduleSeconds = 0): Pr
     return { enqueued: false };
   }
 
-  const parent = getClient().queuePath(config.projectId, config.region, config.cloudTasksQueue);
+  const token = await getGcpAccessToken();
+  const parent = `projects/${config.projectId}/locations/${config.region}/queues/${config.cloudTasksQueue}`;
   const taskSecret = process.env.GCP_CLOUD_TASKS_SECRET;
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (taskSecret) {
     headers.Authorization = `Bearer ${taskSecret}`;
   }
 
-  const [task] = await getClient().createTask({
-    parent,
+  const body: Record<string, unknown> = {
     task: {
       httpRequest: {
         httpMethod: "POST",
@@ -44,11 +35,32 @@ export async function enqueueTask(payload: TaskPayload, scheduleSeconds = 0): Pr
         headers,
         body: Buffer.from(JSON.stringify(payload)).toString("base64"),
       },
-      scheduleTime: scheduleSeconds
-        ? { seconds: Math.floor(Date.now() / 1000) + scheduleSeconds }
-        : undefined,
     },
-  });
+  };
 
-  return { enqueued: true, taskName: task.name ?? undefined };
+  if (scheduleSeconds > 0) {
+    (body.task as Record<string, unknown>).scheduleTime = {
+      seconds: Math.floor(Date.now() / 1000) + scheduleSeconds,
+    };
+  }
+
+  const response = await fetch(
+    `https://cloudtasks.googleapis.com/v2/${parent}/tasks`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    },
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`CLOUD_TASKS_FAILED:${response.status}:${errorText.slice(0, 300)}`);
+  }
+
+  const data = (await response.json()) as { name?: string };
+  return { enqueued: true, taskName: data.name };
 }

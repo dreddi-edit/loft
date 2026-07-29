@@ -1,18 +1,18 @@
 "use client";
 
-import { Button } from "@hair-simo/ui";
-
-export function LogoutButton() {
+export function LogoutButton({ label }: { label: string }) {
   return (
-    <Button
+    <button
+      className="admin-logout"
       type="button"
-      variant="secondary"
+      aria-label={label}
+      title={label}
       onClick={async () => {
         await fetch("/api/auth/login", { method: "DELETE" });
         window.location.href = "/login";
       }}
     >
-      Logout
-    </Button>
+      ↗
+    </button>
   );
 }

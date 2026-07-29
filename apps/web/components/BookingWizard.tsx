@@ -38,14 +38,14 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
   const [paymentComplete, setPaymentComplete] = useState(false);
   const [config, setConfig] = useState<PublicConfig | null>(null);
 
-  const [serviceSlug, setServiceSlug] = useState("haircut-women");
+  const [serviceSlug, setServiceSlug] = useState("");
   const [staffId, setStaffId] = useState("");
   const [day, setDay] = useState(new Date().toISOString().slice(0, 10));
   const [startsAt, setStartsAt] = useState("");
-  const [email, setEmail] = useState("maria@example.com");
-  const [firstName, setFirstName] = useState("Maria");
-  const [lastName, setLastName] = useState("Rossi");
-  const [phone, setPhone] = useState("+41790000000");
+  const [email, setEmail] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [phone, setPhone] = useState("");
   const [paymentMode, setPaymentMode] = useState<"deposit" | "full">("deposit");
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [marketingOptIn, setMarketingOptIn] = useState(false);
@@ -57,12 +57,33 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
     () => services.find((entry) => entry.slug === serviceSlug),
     [services, serviceSlug],
   );
+  const selectedStaff = useMemo(() => staff.find((entry) => entry.id === staffId), [staff, staffId]);
+
+  function presentError(message: string) {
+    if (message.includes("SLOT_NOT_AVAILABLE")) return "Der Slot ist leider nicht mehr verfuegbar. Bitte waehle einen anderen Termin.";
+    if (message.includes("STAFF_NOT_ELIGIBLE")) return "Diese Mitarbeiterin ist fuer den Service nicht verfuegbar.";
+    if (message.includes("TERMS_NOT_ACCEPTED")) return "Bitte akzeptiere die Bedingungen, um fortzufahren.";
+    if (message.includes("SERVICE_NOT_FOUND")) return "Der Service wurde nicht gefunden.";
+    return message;
+  }
 
   useEffect(() => {
     void fetch("/api/config/public")
       .then((res) => res.json())
       .then((json) => setConfig(json.data ?? null))
       .catch(() => setConfig(null));
+  }, []);
+
+  useEffect(() => {
+    void ensureCatalogLoaded();
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const requestedService = params.get("service");
+    const requestedDate = params.get("date");
+    if (requestedService) setServiceSlug(requestedService);
+    if (requestedDate) setDay(requestedDate);
   }, []);
 
   useEffect(() => {
@@ -82,7 +103,9 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
       fetch("/api/staff").catch(() => null),
     ]);
     const servicesJson = await servicesRes.json();
-    setServices(servicesJson.data ?? []);
+    const loadedServices = servicesJson.data ?? [];
+    setServices(loadedServices);
+    setServiceSlug((current) => current || loadedServices[0]?.slug || "");
     if (staffRes) {
       const staffJson = await staffRes.json();
       setStaff((staffJson.data ?? []).map((entry: { id: string; displayName: string }) => ({
@@ -105,9 +128,13 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
       const json = await response.json();
       if (!response.ok) throw new Error(json.message ?? "AVAILABILITY_ERROR");
       setSlots(json.data ?? []);
-      if (json.data?.[0]) setStartsAt(json.data[0].startsAt);
+      if (json.data?.[0]) {
+        setStartsAt((current) => current || json.data[0].startsAt);
+      } else {
+        setStartsAt("");
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : t(locale, "error_generic"));
+      setError(err instanceof Error ? presentError(err.message) : t(locale, "error_generic"));
     } finally {
       setLoading(false);
     }
@@ -140,7 +167,7 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
       if (json.data.manageUrl) setManageUrl(json.data.manageUrl);
       setStepIndex(4);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t(locale, "error_generic"));
+      setError(err instanceof Error ? presentError(err.message) : t(locale, "error_generic"));
     } finally {
       setLoading(false);
     }
@@ -166,7 +193,7 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
       setPaymentId(json.data.paymentId);
       setAmountCents(json.data.amountCents);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t(locale, "error_generic"));
+      setError(err instanceof Error ? presentError(err.message) : t(locale, "error_generic"));
     } finally {
       setLoading(false);
     }
@@ -186,7 +213,7 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
       if (!response.ok) throw new Error(json.message ?? "MOCK_PAYMENT_FAILED");
       setPaymentComplete(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t(locale, "error_generic"));
+      setError(err instanceof Error ? presentError(err.message) : t(locale, "error_generic"));
     } finally {
       setLoading(false);
     }
@@ -195,7 +222,10 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
   async function nextStep() {
     setError(null);
     if (step === "service") {
-      await ensureCatalogLoaded();
+      if (!serviceSlug) {
+        setError("Bitte zuerst einen Service waehlen.");
+        return;
+      }
       setStepIndex(1);
       return;
     }
@@ -204,7 +234,10 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
       return;
     }
     if (step === "datetime") {
-      await loadSlots();
+      if (!startsAt) {
+        setError("Bitte waehle einen verfuegbaren Termin.");
+        return;
+      }
       setStepIndex(3);
       return;
     }
@@ -216,26 +249,30 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
   const showMockPayment = config?.paymentsMockEnabled && paymentId && !paymentComplete;
   const showGooglePayHint = config?.googlePayConfigured && paymentId && !paymentComplete;
 
+  useEffect(() => {
+    if (step !== "datetime" || !serviceSlug || !day) return;
+    void loadSlots();
+  }, [step, serviceSlug, staffId, day]);
+
   return (
-    <div>
+    <div className="hs-booking-shell">
       <PageHeader title={t(locale, "booking_title")} subtitle={t(locale, "hero_subtitle")} />
-      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem", flexWrap: "wrap" }}>
+      <div className="hs-booking-stepper">
         {steps.map((entry, index) => (
           <Badge key={entry}>{index <= stepIndex ? "✓" : "•"} {t(locale, `booking_step_${entry}` as never)}</Badge>
         ))}
       </div>
 
-      <Card>
+      <div className="hs-booking-layout">
+      <Card className="hs-booking-card">
         {step === "service" ? (
           <Select label={t(locale, "booking_step_service")} value={serviceSlug} onChange={(event) => setServiceSlug(event.target.value)}>
-            {(services.length ? services : [{ slug: "haircut-women", translations: [{ locale, name: "Haircut" }] } as Service]).map(
-              (service) => (
-                <option key={service.slug} value={service.slug}>
-                  {service.translations.find((tr) => tr.locale === locale)?.name ?? service.slug} (
-                  {(service.priceCents / 100).toFixed(2)} EUR)
-                </option>
-              ),
-            )}
+            {services.map((service) => (
+              <option key={service.slug} value={service.slug}>
+                {service.translations.find((tr) => tr.locale === locale)?.name ?? service.slug} (
+                {(service.priceCents / 100).toFixed(2)} EUR)
+              </option>
+            ))}
           </Select>
         ) : null}
 
@@ -254,12 +291,25 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
           <div className="hs-grid hs-grid-2">
             <Input label="Day" type="date" value={day} onChange={(event) => setDay(event.target.value)} />
             <Select label={t(locale, "booking_step_datetime")} value={startsAt} onChange={(event) => setStartsAt(event.target.value)}>
+              <option value="">{loading ? "Lade Zeiten..." : "Bitte Slot waehlen"}</option>
               {slots.map((slot) => (
                 <option key={slot.startsAt} value={slot.startsAt}>
                   {new Date(slot.startsAt).toLocaleString(locale)}
                 </option>
               ))}
             </Select>
+            <div className="hs-booking-slot-grid" style={{ gridColumn: "1 / -1" }}>
+              {slots.slice(0, 12).map((slot) => (
+                <button
+                  key={slot.startsAt}
+                  type="button"
+                  className={`hs-booking-slot ${startsAt === slot.startsAt ? "active" : ""}`}
+                  onClick={() => setStartsAt(slot.startsAt)}
+                >
+                  {new Date(slot.startsAt).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" })}
+                </button>
+              ))}
+            </div>
           </div>
         ) : null}
 
@@ -341,6 +391,16 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
           ) : null}
         </div>
       </Card>
+      <Card className="hs-booking-summary-card">
+        <h3 className="hs-display" style={{ marginTop: 0, fontSize: "1.6rem" }}>Zusammenfassung</h3>
+        <p><strong>Service:</strong> {selectedService?.translations.find((tr) => tr.locale === locale)?.name ?? "-"}</p>
+        <p><strong>Mitarbeiterin:</strong> {selectedStaff?.displayName ?? t(locale, "booking_any_stylist")}</p>
+        <p><strong>Datum:</strong> {day || "-"}</p>
+        <p><strong>Zeit:</strong> {startsAt ? new Date(startsAt).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" }) : "-"}</p>
+        <p><strong>Preis:</strong> {selectedService ? `${(selectedService.priceCents / 100).toFixed(2)} EUR` : "-"}</p>
+        <p style={{ color: "var(--hs-muted)", marginBottom: 0 }}>Status: {loading ? "wird verarbeitet..." : "bereit"}</p>
+      </Card>
+      </div>
     </div>
   );
 }

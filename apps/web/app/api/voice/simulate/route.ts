@@ -35,7 +35,8 @@ export async function POST(request: NextRequest) {
 
     let audioBase64: string | null = null;
     try {
-      const { synthesizeSpeechBase64, isGcpConfigured } = await import("@hair-simo/gcp");
+      const { isGcpConfigured } = await import("@hair-simo/gcp/config");
+      const { synthesizeSpeechBase64 } = await import("@hair-simo/gcp/text-to-speech");
       if (isGcpConfigured()) {
         const audio = await synthesizeSpeechBase64({ text: result.response, locale: result.locale });
         audioBase64 = audio.audioBase64.length > 0 ? audio.audioBase64 : null;

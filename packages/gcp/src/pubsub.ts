@@ -1,4 +1,4 @@
-import { PubSub } from "@google-cloud/pubsub";
+import { getGcpAccessToken } from "./access-token";
 import { getGcpConfig, isGcpConfigured } from "./config";
 
 export type NotificationEvent = {
@@ -9,15 +9,6 @@ export type NotificationEvent = {
   payload: Record<string, unknown>;
 };
 
-let pubsubClient: PubSub | null = null;
-
-function getClient(): PubSub {
-  if (!pubsubClient) {
-    pubsubClient = new PubSub({ projectId: getGcpConfig().projectId });
-  }
-  return pubsubClient;
-}
-
 export async function publishNotificationEvent(event: NotificationEvent): Promise<{ published: boolean; messageId?: string }> {
   if (!isGcpConfigured()) {
     console.info("[pubsub:local]", event);
@@ -25,15 +16,35 @@ export async function publishNotificationEvent(event: NotificationEvent): Promis
   }
 
   const config = getGcpConfig();
-  const topic = getClient().topic(config.pubsubTopicNotifications);
-  const messageId = await topic.publishMessage({
-    json: event,
-    attributes: {
-      type: event.type,
-      channel: event.channel,
-      locale: event.locale,
+  const token = await getGcpAccessToken();
+  const topic = `projects/${config.projectId}/topics/${config.pubsubTopicNotifications}`;
+  const data = Buffer.from(JSON.stringify(event)).toString("base64");
+
+  const response = await fetch(`https://pubsub.googleapis.com/v1/${topic}:publish`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
     },
+    body: JSON.stringify({
+      messages: [
+        {
+          data,
+          attributes: {
+            type: event.type,
+            channel: event.channel,
+            locale: event.locale,
+          },
+        },
+      ],
+    }),
   });
 
-  return { published: true, messageId };
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`PUBSUB_FAILED:${response.status}:${errorText.slice(0, 300)}`);
+  }
+
+  const result = (await response.json()) as { messageIds?: string[] };
+  return { published: true, messageId: result.messageIds?.[0] };
 }

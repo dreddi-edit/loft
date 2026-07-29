@@ -1,52 +1,60 @@
 import type { AppLocale } from "@hair-simo/i18n";
 import { SUPPORTED_LOCALES, t } from "@hair-simo/i18n";
-import { AnchorButton, Container } from "@hair-simo/ui";
+import { AnchorButton, BrandLogo, Container } from "@hair-simo/ui";
+import { contactInfo } from "../lib/site-content";
 
 const navItems = [
   "nav_home",
   "nav_services",
-  "nav_prices",
   "nav_products",
   "nav_team",
   "nav_contact",
-  "nav_booking",
-  "nav_faq",
 ] as const;
 
 const navPaths: Record<(typeof navItems)[number], string> = {
   nav_home: "",
   nav_services: "services",
-  nav_prices: "prices",
   nav_products: "products",
   nav_team: "team",
   nav_contact: "contact",
-  nav_booking: "booking",
-  nav_faq: "faq",
 };
 
 export function SiteHeader({ locale }: { locale: AppLocale }) {
   return (
-    <header style={{ borderBottom: "1px solid var(--hs-border)", padding: "1rem 0", marginBottom: "2rem" }}>
+    <header className="hs-site-header">
       <Container>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "1rem", flexWrap: "wrap" }}>
-          <div>
-            <strong style={{ fontSize: "1.25rem" }}>{t(locale, "site_title")}</strong>
-            <div style={{ color: "var(--hs-muted)", fontSize: "0.875rem" }}>{t(locale, "site_tagline")}</div>
+        <div className="hs-header-shell">
+          <div className="hs-header-logo">
+            <BrandLogo href={`/${locale}`} alt={t(locale, "site_title")} />
           </div>
-          <nav style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", fontSize: "0.9rem" }}>
-            {navItems.map((key) => (
-              <a key={key} href={`/${locale}/${navPaths[key]}`.replace(/\/$/, "") || `/${locale}`}>
-                {t(locale, key)}
+
+          <div className="hs-header-nav-wrap">
+            <nav className="hs-nav" aria-label="Main">
+              {navItems.map((key) => (
+                <a key={key} href={`/${locale}/${navPaths[key]}`.replace(/\/$/, "") || `/${locale}`}>
+                  {t(locale, key)}
+                </a>
+              ))}
+            </nav>
+
+            <div className="hs-site-header-actions">
+              <details className="hs-locale-dropdown">
+                <summary>{locale.toUpperCase()}</summary>
+                <div className="hs-locale-dropdown-menu">
+                  {SUPPORTED_LOCALES.map((entry) => (
+                    <a key={entry} href={`/${entry}`} className={entry === locale ? "active" : undefined}>
+                      {entry.toUpperCase()}
+                    </a>
+                  ))}
+                </div>
+              </details>
+              <a href={contactInfo.phoneHref} className="hs-header-phone">
+                {t(locale, "call_now")}
               </a>
-            ))}
-          </nav>
-          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-            {SUPPORTED_LOCALES.map((entry) => (
-              <a key={entry} href={`/${entry}`} style={{ opacity: entry === locale ? 1 : 0.6 }}>
-                {entry.toUpperCase()}
-              </a>
-            ))}
-            <AnchorButton href={`/${locale}/booking`}>{t(locale, "book_now")}</AnchorButton>
+              <AnchorButton href={`/${locale}/booking`} className="hs-header-booking">
+                {t(locale, "book_now")}
+              </AnchorButton>
+            </div>
           </div>
         </div>
       </Container>

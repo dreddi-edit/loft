@@ -32,7 +32,23 @@ variable "alloydb_cluster_id" {
   default = "hair-simo-db"
 }
 
+variable "enable_alloydb" {
+  type    = bool
+  default = false
+}
+
+variable "enable_load_balancer" {
+  type    = bool
+  default = false
+}
+
 variable "alloydb_password" {
   type      = string
   sensitive = true
+}
+
+variable "cron_secret" {
+  type        = string
+  description = "Bearer token for /api/cron/reminders"
+  sensitive   = true
 }

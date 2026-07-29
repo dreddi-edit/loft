@@ -5,6 +5,18 @@
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./config": "./src/config.ts",
+    "./vertex-ai": "./src/vertex-ai.ts",
+    "./access-token": "./src/access-token.ts",
+    "./cloud-tasks": "./src/cloud-tasks.ts",
+    "./pubsub": "./src/pubsub.ts",
+    "./text-to-speech": "./src/text-to-speech.ts",
+    "./speech-to-text": "./src/speech-to-text.ts",
+    "./identity-platform": "./src/identity-platform.ts",
+    "./dialogflow": "./src/dialogflow.ts"
+  },
   "scripts": {
     "build": "tsc --project tsconfig.json",
     "lint": "eslint src --ext .ts",
@@ -12,11 +24,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@google-cloud/pubsub": "^5.2.0",
-    "@google-cloud/speech": "^7.2.0",
-    "@google-cloud/tasks": "^6.2.0",
-    "@google-cloud/text-to-speech": "^6.2.0",
-    "@google-cloud/vertexai": "^1.10.0",
     "firebase-admin": "^13.5.0",
     "googleapis": "^160.0.0",
     "zod": "^4.1.5"

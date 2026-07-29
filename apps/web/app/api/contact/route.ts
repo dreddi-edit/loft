@@ -14,7 +14,7 @@ const notificationService = new NotificationService();
 export async function POST(request: NextRequest) {
   try {
     const body = schema.parse(await request.json());
-    const salonEmail = process.env.CONTACT_INBOX_EMAIL ?? "contact@hairsimo.local";
+    const salonEmail = process.env.CONTACT_INBOX_EMAIL ?? "info@hairsimo.it";
     await notificationService.send({
       channel: "web",
       recipient: salonEmail,

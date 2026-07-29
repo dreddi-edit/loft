@@ -3,20 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import type { AppLocale } from "@hair-simo/i18n";
 import { t } from "@hair-simo/i18n";
-import { Button } from "@hair-simo/ui";
-
-type PublicConfig = {
-  gcpEnabled: boolean;
-  paymentsMockEnabled: boolean;
-  googlePayConfigured: boolean;
-  environment: string;
-};
+import { BrandLogo, Button } from "@hair-simo/ui";
 
 type Message = {
   id: string;
   role: "user" | "assistant";
   text: string;
-  meta?: string;
+  actions?: Array<{ label: string; href?: string; prompt?: string }>;
 };
 
 type ChatWidgetProps = {
@@ -25,20 +18,10 @@ type ChatWidgetProps = {
 
 export function ChatWidget({ locale }: ChatWidgetProps) {
   const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<"chat" | "voice">("chat");
   const [input, setInput] = useState("");
-  const [voiceInput, setVoiceInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
-  const [config, setConfig] = useState<PublicConfig | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    void fetch("/api/config/public")
-      .then((res) => res.json())
-      .then((json) => setConfig(json.data ?? null))
-      .catch(() => setConfig(null));
-  }, []);
 
   useEffect(() => {
     if (open && messages.length === 0) {
@@ -84,7 +67,7 @@ export function ChatWidget({ locale }: ChatWidgetProps) {
           id: `a-${Date.now()}`,
           role: "assistant",
           text: json.data.response,
-          meta: json.data.provider,
+          actions: json.data.actions ?? [],
         },
       ]);
     } catch (error) {
@@ -101,120 +84,74 @@ export function ChatWidget({ locale }: ChatWidgetProps) {
     }
   }
 
-  async function simulateVoice() {
-    if (!voiceInput.trim()) return;
-    const userMessage: Message = { id: `v-${Date.now()}`, role: "user", text: voiceInput.trim() };
-    setMessages((prev) => [...prev, userMessage]);
-    setVoiceInput("");
-    setLoading(true);
-    try {
-      const response = await fetch("/api/voice/simulate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: userMessage.text, locale }),
-      });
-      const json = await response.json();
-      if (!response.ok) throw new Error(json.message ?? "VOICE_FAILED");
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `va-${Date.now()}`,
-          role: "assistant",
-          text: json.data.response,
-          meta: json.data.audioBase64 ? "voice+audio" : json.data.provider ?? "voice-simulator",
-        },
-      ]);
-    } catch (error) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `ve-${Date.now()}`,
-          role: "assistant",
-          text: error instanceof Error ? error.message : t(locale, "error_generic"),
-        },
-      ]);
-    } finally {
-      setLoading(false);
-    }
-  }
-
   return (
     <>
       {!open ? (
         <button type="button" className="hs-chat-fab" onClick={() => setOpen(true)} aria-label={t(locale, "chat_open")}>
-          💬
+          <img src="/brand/logo.png" alt="" className="hs-chat-fab-logo" />
         </button>
       ) : null}
 
       {open ? (
         <div className="hs-chat-panel" role="dialog" aria-label={t(locale, "chat_title")}>
           <header className="hs-chat-header">
-            <div>
+            <div className="hs-chat-header-brand">
+              <BrandLogo alt={t(locale, "site_title")} size="sm" />
               <strong>{t(locale, "chat_title")}</strong>
-              {config ? (
-                <p className="hs-chat-meta">
-                  {config.gcpEnabled ? "GCP" : "Local"} · {config.environment}
-                </p>
-              ) : null}
             </div>
             <button type="button" className="hs-chat-close" onClick={() => setOpen(false)} aria-label={t(locale, "chat_close")}>
               ×
             </button>
           </header>
 
-          <div className="hs-chat-tabs">
-            <button type="button" className={tab === "chat" ? "active" : ""} onClick={() => setTab("chat")}>
-              {t(locale, "chat_text_tab")}
-            </button>
-            <button type="button" className={tab === "voice" ? "active" : ""} onClick={() => setTab("voice")}>
-              {t(locale, "chat_voice_tab")}
-            </button>
-          </div>
-
           <div className="hs-chat-messages" ref={listRef}>
             {messages.map((message) => (
               <div key={message.id} className={`hs-chat-bubble ${message.role}`}>
                 <p>{message.text}</p>
-                {message.meta ? <span className="hs-chat-meta">{message.meta}</span> : null}
+                {message.actions?.length ? (
+                  <div className="hs-chat-actions">
+                    {message.actions.map((action, index) =>
+                      action.href ? (
+                        <a key={`${action.label}-${index}`} className="hs-chat-action-link" href={action.href}>
+                          {action.label}
+                        </a>
+                      ) : (
+                        <button
+                          key={`${action.label}-${index}`}
+                          type="button"
+                          className="hs-chat-action-button"
+                          onClick={() => {
+                            if (action.prompt) void sendChat(action.prompt);
+                          }}
+                        >
+                          {action.label}
+                        </button>
+                      ),
+                    )}
+                  </div>
+                ) : null}
               </div>
             ))}
             {loading ? <p className="hs-chat-meta">{t(locale, "chat_thinking")}</p> : null}
           </div>
 
-          {tab === "chat" ? (
-            <form
-              className="hs-chat-input-row"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void sendChat(input);
-              }}
-            >
-              <input
-                className="hs-input"
-                value={input}
-                onChange={(event) => setInput(event.target.value)}
-                placeholder={t(locale, "chat_placeholder")}
-              />
-              <Button type="submit" disabled={loading}>
-                {t(locale, "chat_send")}
-              </Button>
-            </form>
-          ) : (
-            <div className="hs-chat-input-row hs-grid">
-              <p className="hs-chat-meta">{t(locale, "chat_voice_hint")}</p>
-              <textarea
-                className="hs-textarea"
-                rows={3}
-                value={voiceInput}
-                onChange={(event) => setVoiceInput(event.target.value)}
-                placeholder={t(locale, "chat_voice_placeholder")}
-              />
-              <Button type="button" disabled={loading} onClick={() => void simulateVoice()}>
-                {t(locale, "chat_voice_simulate")}
-              </Button>
-            </div>
-          )}
+          <form
+            className="hs-chat-input-row"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void sendChat(input);
+            }}
+          >
+            <input
+              className="hs-input"
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              placeholder={t(locale, "chat_placeholder")}
+            />
+            <Button type="submit" disabled={loading}>
+              {t(locale, "chat_send")}
+            </Button>
+          </form>
         </div>
       ) : null}
     </>

@@ -82,7 +82,7 @@ pnpm dev
 
 Admin-Login (Seed):
 
-- `owner@hairsimo.local` / `HairSimo2026!`
+- Team login via seed accounts (`simona@hairsimo.it`, etc.)
 
 Verify:
 

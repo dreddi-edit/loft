@@ -1,25 +1,15 @@
 import type { ReactNode } from "react";
-import Link from "next/link";
-import { Container } from "@hair-simo/ui";
+import { BrandLogo } from "@hair-simo/ui";
+import { AdminNavigation } from "./AdminNavigation";
+import { AdminTopbar } from "./AdminTopbar";
 import { LogoutButton } from "./LogoutButton";
 import { getSession } from "../lib/auth";
-
-const links = [
-  ["dashboard", "Dashboard"],
-  ["calendar", "Calendar"],
-  ["appointments", "Appointments"],
-  ["customers", "Customers"],
-  ["services", "Services"],
-  ["staff", "Staff"],
-  ["rules", "Rules"],
-  ["reports", "Reports"],
-  ["call-logs", "Calls"],
-  ["notifications", "Notifications"],
-  ["products", "Products"],
-] as const;
+import { adminT } from "../lib/admin-messages";
+import { getAdminLocale } from "../lib/admin-locale-server";
 
 export default async function AdminShell({ children }: { children: ReactNode }) {
   const session = await getSession();
+  const locale = await getAdminLocale();
 
   if (!session) {
     return <>{children}</>;
@@ -28,21 +18,23 @@ export default async function AdminShell({ children }: { children: ReactNode }) 
   return (
     <div className="admin-shell">
       <aside className="admin-sidebar">
-        <strong>Hair Simo Admin</strong>
-        <p style={{ color: "var(--hs-muted)", fontSize: "0.85rem" }}>
-          {session.firstName} {session.lastName} ({session.role})
-        </p>
-        <nav style={{ marginTop: "1rem" }}>
-          {links.map(([slug, label]) => (
-            <Link key={slug} href={`/${slug}`}>
-              {label}
-            </Link>
-          ))}
-        </nav>
-        <LogoutButton />
+        <div className="admin-sidebar-brand">
+          <BrandLogo size="md" invert />
+          <span>Salon OS</span>
+        </div>
+        <AdminNavigation locale={locale} />
+        <div className="admin-sidebar-user">
+          <div>{session.firstName.slice(0, 1)}{session.lastName.slice(0, 1)}</div>
+          <span>
+            <strong>{session.firstName} {session.lastName}</strong>
+            <small>{session.role}</small>
+          </span>
+          <LogoutButton label={adminT(locale, "logout")} />
+        </div>
       </aside>
       <section className="admin-main">
-        <Container>{children}</Container>
+        <AdminTopbar locale={locale} />
+        <main className="admin-content">{children}</main>
       </section>
     </div>
   );

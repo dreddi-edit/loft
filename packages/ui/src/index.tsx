@@ -70,12 +70,89 @@ type PageHeaderProps = { title: string; subtitle?: string };
 export function PageHeader({ title, subtitle }: PageHeaderProps) {
   return (
     <header style={{ marginBottom: "1.5rem" }}>
-      <h1 style={{ margin: 0 }}>{title}</h1>
-      {subtitle ? <p style={{ color: "var(--hs-muted)", marginTop: "0.5rem" }}>{subtitle}</p> : null}
+      <h1 style={{ margin: 0, fontFamily: "var(--hs-font-display)", fontSize: "clamp(2rem, 4vw, 3rem)" }}>{title}</h1>
+      {subtitle ? <p style={{ color: "var(--hs-muted)", marginTop: "0.75rem", maxWidth: "680px" }}>{subtitle}</p> : null}
     </header>
   );
 }
 
-export function Container({ children }: { children: ReactNode }) {
-  return <div className="hs-container">{children}</div>;
+export function Container({ children, className, style }: { children: ReactNode; className?: string; style?: CSSProperties }) {
+  return <div className={cn("hs-container", className)} style={style}>{children}</div>;
+}
+
+const brandLogoSources = {
+  sm: "/brand/logo.png",
+  md: "/brand/logo.png",
+  lg: "/brand/logo.png",
+} as const;
+
+type BrandLogoProps = {
+  alt?: string;
+  size?: keyof typeof brandLogoSources;
+  tagline?: string;
+  className?: string;
+  href?: string;
+  invert?: boolean;
+};
+
+export function BrandLogo({
+  alt = "Hair Simo",
+  size = "sm",
+  tagline,
+  className,
+  href,
+  invert = false,
+}: BrandLogoProps) {
+  const image = (
+    <img
+      src={brandLogoSources[size]}
+      alt={alt}
+      className={cn(
+        "hs-brand-logo",
+        size === "md" && "hs-brand-logo-md",
+        size === "lg" && "hs-brand-logo-lg",
+        invert && "hs-brand-logo-invert",
+        className,
+      )}
+      width={size === "sm" ? 160 : 220}
+      height={size === "sm" ? 55 : 75}
+    />
+  );
+
+  const content = (
+    <span className="hs-brand">
+      {image}
+      {tagline ? <span className="hs-brand-tagline">{tagline}</span> : null}
+    </span>
+  );
+
+  if (href) {
+    return (
+      <a href={href} className="hs-brand-link">
+        {content}
+      </a>
+    );
+  }
+
+  return content;
+}
+
+type PartnerLogoProps = {
+  src?: string;
+  alt?: string;
+  className?: string;
+  invert?: boolean;
+};
+
+export function PartnerLogo({
+  src = "/brand/davines-logo-sm.png",
+  alt = "Davines",
+  className,
+  invert = false,
+}: PartnerLogoProps) {
+  return (
+    <div className={cn("hs-partner-logo", className)}>
+      <img src={src} alt={alt} className={cn(invert && "hs-brand-logo-invert")} loading="lazy" />
+    </div>
+  );
 }

@@ -1,4 +1,4 @@
-import { TextToSpeechClient } from "@google-cloud/text-to-speech";
+import { getGcpAccessToken } from "./access-token";
 import { getTtsVoiceForLocale, isGcpConfigured } from "./config";
 
 export type SynthesisResult = {
@@ -14,27 +14,40 @@ export async function synthesizeSpeech(input: {
     return { audioContent: Buffer.alloc(0), mimeType: "audio/mpeg" };
   }
 
-  const client = new TextToSpeechClient();
+  const token = await getGcpAccessToken();
   const voiceName = getTtsVoiceForLocale(input.locale);
+  const languageCode = voiceName.split("-").slice(0, 2).join("-");
 
-  const [response] = await client.synthesizeSpeech({
-    input: { text: input.text },
-    voice: {
-      languageCode: voiceName.split("-").slice(0, 2).join("-"),
-      name: voiceName,
+  const response = await fetch("https://texttospeech.googleapis.com/v1/text:synthesize", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
     },
-    audioConfig: {
-      audioEncoding: "MP3",
-      speakingRate: 1.0,
-      pitch: 0,
-    },
+    body: JSON.stringify({
+      input: { text: input.text },
+      voice: {
+        languageCode,
+        name: voiceName,
+      },
+      audioConfig: {
+        audioEncoding: "MP3",
+        speakingRate: 1.0,
+        pitch: 0,
+      },
+    }),
   });
 
-  const audioContent = response.audioContent
-    ? Buffer.from(response.audioContent as Uint8Array)
-    : Buffer.alloc(0);
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`TTS_REQUEST_FAILED:${response.status}:${errorText.slice(0, 300)}`);
+  }
 
-  return { audioContent, mimeType: "audio/mpeg" };
+  const data = (await response.json()) as { audioContent?: string };
+  return {
+    audioContent: data.audioContent ? Buffer.from(data.audioContent, "base64") : Buffer.alloc(0),
+    mimeType: "audio/mpeg",
+  };
 }
 
 export async function synthesizeSpeechBase64(input: {

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { AppLocale } from "@hair-simo/i18n";
 import { t } from "@hair-simo/i18n";
-import { Button, Card, Input } from "@hair-simo/ui";
+import { Input } from "@hair-simo/ui";
 
 export function ContactForm({ locale }: { locale: AppLocale }) {
   const [name, setName] = useState("");
@@ -23,20 +23,23 @@ export function ContactForm({ locale }: { locale: AppLocale }) {
   }
 
   return (
-    <Card>
-      <form className="hs-grid" onSubmit={(event) => void onSubmit(event)}>
+    <form className="hs-contact-form" onSubmit={(event) => void onSubmit(event)}>
+        <div className="hs-contact-form-heading">
+          <span>02</span>
+          <h2>{t(locale, "contact_title")}</h2>
+        </div>
         <Input label={t(locale, "contact_name")} value={name} onChange={(e) => setName(e.target.value)} required />
         <Input label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
         <label className="hs-label">
           {t(locale, "contact_message")}
           <textarea className="hs-textarea" rows={5} value={message} onChange={(e) => setMessage(e.target.value)} required />
         </label>
-        <Button type="submit" disabled={status === "loading"}>
+        <button className="hs-contact-submit" type="submit" disabled={status === "loading"}>
           {status === "loading" ? t(locale, "loading") : t(locale, "submit")}
-        </Button>
+          <span aria-hidden="true">↗</span>
+        </button>
         {status === "sent" ? <p style={{ color: "var(--hs-success)" }}>{t(locale, "contact_sent")}</p> : null}
         {status === "error" ? <p style={{ color: "var(--hs-danger)" }}>{t(locale, "error_generic")}</p> : null}
-      </form>
-    </Card>
+    </form>
   );
 }

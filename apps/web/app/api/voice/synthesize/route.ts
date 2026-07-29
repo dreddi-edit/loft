@@ -9,7 +9,7 @@ const synthesizeSchema = z.object({
 export async function POST(request: NextRequest) {
   try {
     const input = synthesizeSchema.parse(await request.json());
-    const { synthesizeSpeechBase64 } = await import("@hair-simo/gcp");
+    const { synthesizeSpeechBase64 } = await import("@hair-simo/gcp/text-to-speech");
     const result = await synthesizeSpeechBase64(input);
     return NextResponse.json({ data: result });
   } catch (error) {

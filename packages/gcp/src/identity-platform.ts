@@ -47,7 +47,9 @@ export async function verifyIdToken(idToken: string): Promise<IdentitySession> {
     uid: decoded.uid,
     email: decoded.email ?? "",
     emailVerified: decoded.email_verified ?? false,
-    customClaims: (decoded as DecodedIdToken & { role?: string; customClaims?: Record<string, unknown> }) ?? {},
+    customClaims: {
+      role: (decoded as DecodedIdToken & { role?: string }).role,
+    },
   };
 }
 

@@ -1,4 +1,4 @@
-import { FunctionDeclarationSchemaType, VertexAI, type FunctionDeclaration } from "@google-cloud/vertexai";
+import { getGcpAccessToken } from "./access-token";
 import { getGcpConfig, isGcpConfigured } from "./config";
 
 export type GeminiToolCall = {
@@ -18,9 +18,9 @@ const functionDeclarations = [
     name: "checkAvailability",
     description: "Check available appointment slots for a service",
     parameters: {
-      type: FunctionDeclarationSchemaType.OBJECT,
+      type: "OBJECT",
       properties: {
-        serviceId: { type: FunctionDeclarationSchemaType.STRING, description: "Service slug or ID" },
+        serviceId: { type: "STRING", description: "Service slug or ID" },
       },
       required: ["serviceId"],
     },
@@ -29,10 +29,10 @@ const functionDeclarations = [
     name: "createBooking",
     description: "Create a new salon appointment booking",
     parameters: {
-      type: FunctionDeclarationSchemaType.OBJECT,
+      type: "OBJECT",
       properties: {
-        serviceId: { type: FunctionDeclarationSchemaType.STRING },
-        customerId: { type: FunctionDeclarationSchemaType.STRING },
+        serviceId: { type: "STRING" },
+        customerId: { type: "STRING" },
       },
       required: ["serviceId"],
     },
@@ -41,9 +41,9 @@ const functionDeclarations = [
     name: "rescheduleBooking",
     description: "Reschedule an existing appointment",
     parameters: {
-      type: FunctionDeclarationSchemaType.OBJECT,
+      type: "OBJECT",
       properties: {
-        appointmentId: { type: FunctionDeclarationSchemaType.STRING },
+        appointmentId: { type: "STRING" },
       },
       required: ["appointmentId"],
     },
@@ -52,9 +52,9 @@ const functionDeclarations = [
     name: "cancelBooking",
     description: "Cancel an existing appointment",
     parameters: {
-      type: FunctionDeclarationSchemaType.OBJECT,
+      type: "OBJECT",
       properties: {
-        appointmentId: { type: FunctionDeclarationSchemaType.STRING },
+        appointmentId: { type: "STRING" },
       },
       required: ["appointmentId"],
     },
@@ -63,20 +63,94 @@ const functionDeclarations = [
     name: "getServiceInfo",
     description: "Get pricing and details for a salon service",
     parameters: {
-      type: FunctionDeclarationSchemaType.OBJECT,
+      type: "OBJECT",
       properties: {
-        serviceId: { type: FunctionDeclarationSchemaType.STRING },
+        serviceId: { type: "STRING" },
       },
       required: ["serviceId"],
     },
   },
-] as FunctionDeclaration[];
+];
 
 function detectLocaleFromText(text: string): "de" | "it" | "fr" | "en" {
   if (/ciao|buongiorno|prenot/i.test(text)) return "it";
   if (/bonjour|salut|réserver/i.test(text)) return "fr";
   if (/hallo|guten tag|buchen/i.test(text)) return "de";
   return "en";
+}
+
+type GeminiPart = {
+  text?: string;
+  functionCall?: { name?: string; args?: Record<string, unknown> };
+};
+
+type GeminiResponse = {
+  candidates?: Array<{
+    content?: { parts?: GeminiPart[] };
+  }>;
+};
+
+async function callGemini(input: {
+  model: string;
+  projectId: string;
+  location: string;
+  systemPrompt?: string;
+  contents: Array<{ role: string; parts: Array<{ text: string }> }>;
+  tools?: boolean;
+}) {
+  const token = await getGcpAccessToken();
+  const url = `https://${input.location}-aiplatform.googleapis.com/v1/projects/${input.projectId}/locations/${input.location}/publishers/google/models/${input.model}:generateContent`;
+
+  const body: Record<string, unknown> = {
+    contents: input.contents,
+  };
+
+  if (input.systemPrompt) {
+    body.systemInstruction = { parts: [{ text: input.systemPrompt }] };
+  }
+
+  if (input.tools) {
+    body.tools = [{ functionDeclarations }];
+  }
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`VERTEX_REQUEST_FAILED:${response.status}:${errorText.slice(0, 300)}`);
+  }
+
+  return (await response.json()) as GeminiResponse;
+}
+
+function parseGeminiResponse(response: GeminiResponse, locale: "de" | "it" | "fr" | "en"): GeminiResult {
+  const parts = response.candidates?.[0]?.content?.parts ?? [];
+  const toolCalls: GeminiToolCall[] = [];
+  let text = "";
+
+  for (const part of parts) {
+    if (part.functionCall) {
+      toolCalls.push({
+        name: part.functionCall.name ?? "unknown",
+        args: part.functionCall.args ?? {},
+      });
+    }
+    if (part.text) text += part.text;
+  }
+
+  return {
+    text: text.trim(),
+    locale,
+    intent: toolCalls[0]?.name ?? "general_faq",
+    toolCalls,
+  };
 }
 
 export async function runGeminiAssistant(input: {
@@ -97,44 +171,21 @@ export async function runGeminiAssistant(input: {
   }
 
   const config = getGcpConfig();
-  const vertex = new VertexAI({ project: config.projectId, location: config.vertexLocation });
-  const model = vertex.getGenerativeModel({
-    model: config.geminiModel,
-    tools: [{ functionDeclarations }],
-    systemInstruction: {
-      role: "system",
-      parts: [{ text: input.systemPrompt }],
-    },
-  });
-
   const history = (input.conversationHistory ?? []).map((entry) => ({
-    role: entry.role,
+    role: entry.role === "model" ? "model" : "user",
     parts: [{ text: entry.text }],
   }));
 
-  const chat = model.startChat({ history });
-  const response = await chat.sendMessage(input.text);
-  const candidate = response.response.candidates?.[0];
-  const parts = candidate?.content?.parts ?? [];
+  const response = await callGemini({
+    model: config.geminiModel,
+    projectId: config.projectId,
+    location: config.vertexLocation,
+    systemPrompt: input.systemPrompt,
+    contents: [...history, { role: "user", parts: [{ text: input.text }] }],
+    tools: true,
+  });
 
-  const toolCalls: GeminiToolCall[] = [];
-  let text = "";
-
-  for (const part of parts) {
-    if ("functionCall" in part && part.functionCall) {
-      toolCalls.push({
-        name: part.functionCall.name ?? "unknown",
-        args: (part.functionCall.args as Record<string, unknown>) ?? {},
-      });
-    }
-    if ("text" in part && part.text) {
-      text += part.text;
-    }
-  }
-
-  const intent = toolCalls[0]?.name ?? "general_faq";
-
-  return { text: text.trim(), locale, intent, toolCalls };
+  return parseGeminiResponse(response, locale);
 }
 
 export async function synthesizeGeminiResponse(input: {
@@ -148,9 +199,6 @@ export async function synthesizeGeminiResponse(input: {
   }
 
   const config = getGcpConfig();
-  const vertex = new VertexAI({ project: config.projectId, location: config.vertexLocation });
-  const model = vertex.getGenerativeModel({ model: config.geminiModel });
-
   const toolSummary = input.toolResults.map((entry) => `${entry.name}: ${entry.result}`).join("\n");
   const prompt = [
     input.systemPrompt,
@@ -161,6 +209,12 @@ export async function synthesizeGeminiResponse(input: {
     .filter(Boolean)
     .join("\n\n");
 
-  const response = await model.generateContent(prompt);
-  return response.response.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? toolSummary;
+  const response = await callGemini({
+    model: config.geminiModel,
+    projectId: config.projectId,
+    location: config.vertexLocation,
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+  });
+
+  return parseGeminiResponse(response, input.locale ?? "en").text || toolSummary;
 }

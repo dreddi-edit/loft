@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "NODE_ENV=production next build",
     "start": "next start",
     "lint": "eslint . --ext .ts,.tsx",
     "typecheck": "tsc --project tsconfig.json --noEmit",
@@ -17,6 +17,7 @@
     "@hair-simo/gcp": "workspace:*",
     "@hair-simo/i18n": "workspace:*",
     "@hair-simo/ui": "workspace:*",
+    "@next/env": "^16.2.12",
     "next": "latest",
     "react": "latest",
     "react-dom": "latest",

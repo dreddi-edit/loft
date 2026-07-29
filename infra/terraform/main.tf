@@ -13,6 +13,10 @@ provider "google" {
   region  = var.region
 }
 
+data "google_project" "current" {
+  project_id = var.project_id
+}
+
 locals {
   labels = {
     app         = "hair-simo"

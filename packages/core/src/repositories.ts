@@ -1,5 +1,6 @@
 import { prisma } from "@hair-simo/db";
-import type { AppointmentStatus, Channel } from "@hair-simo/db";
+import type { AppointmentStatus, Channel, InventoryMovementType, RoleKey } from "@hair-simo/db";
+import { addMinutes } from "date-fns";
 
 export const salonRepository = {
   listServices: (includeInactive = false) =>
@@ -57,21 +58,93 @@ export const salonRepository = {
       include: { translations: true },
     }),
 
-  upsertServiceTranslation: (serviceId: string, locale: string, name: string, description: string) =>
+  upsertServiceTranslation: (
+    serviceId: string,
+    locale: string,
+    name: string,
+    description: string,
+  ) =>
     prisma.serviceTranslation.upsert({
       where: { serviceId_locale: { serviceId, locale } },
       update: { name, description },
       create: { serviceId, locale, name, description },
     }),
 
-  listStaff: () =>
+  listStaff: (filters?: { query?: string; isBookable?: boolean; skip?: number; take?: number }) =>
     prisma.staffProfile.findMany({
+      where: {
+        ...(filters?.isBookable === undefined ? {} : { isBookable: filters.isBookable }),
+        ...(filters?.query
+          ? {
+              OR: [
+                { displayName: { contains: filters.query, mode: "insensitive" as const } },
+                { user: { email: { contains: filters.query, mode: "insensitive" as const } } },
+              ],
+            }
+          : {}),
+      },
       include: {
         user: { include: { roles: { include: { role: true } } } },
         staffServices: { include: { service: true } },
         availability: true,
+        timeOffs: true,
       },
       orderBy: { displayName: "asc" },
+      skip: filters?.skip,
+      take: filters?.take,
+    }),
+
+  findStaffById: (id: string) =>
+    prisma.staffProfile.findUnique({
+      where: { id },
+      include: {
+        user: { include: { roles: { include: { role: true } } } },
+        staffServices: { include: { service: { include: { translations: true } } } },
+        availability: { orderBy: [{ dayOfWeek: "asc" }, { startMin: "asc" }] },
+        timeOffs: { orderBy: { startsAt: "asc" } },
+      },
+    }),
+
+  createStaff: (data: {
+    email: string;
+    passwordHash: string;
+    firstName: string;
+    lastName: string;
+    displayName: string;
+    bio?: string;
+    phone?: string;
+    locale: string;
+    isBookable: boolean;
+    role: RoleKey;
+  }) =>
+    prisma.user.create({
+      data: {
+        email: data.email,
+        passwordHash: data.passwordHash,
+        firstName: data.firstName,
+        lastName: data.lastName,
+        locale: data.locale,
+        roles: {
+          create: {
+            role: {
+              connectOrCreate: {
+                where: { key: data.role },
+                create: { key: data.role },
+              },
+            },
+          },
+        },
+        staffProfile: {
+          create: {
+            displayName: data.displayName,
+            bio: data.bio,
+            phone: data.phone,
+            locale: data.locale,
+            isBookable: data.isBookable,
+          },
+        },
+      },
+      include: { staffProfile: true, roles: { include: { role: true } } },
     }),
 
   listStaffAvailability: (staffId: string) =>
@@ -88,7 +161,12 @@ export const salonRepository = {
 
   updateStaffProfile: (
     id: string,
-    data: Partial<{ displayName: string; bio: string | null; phone: string | null; isBookable: boolean }>,
+    data: Partial<{
+      displayName: string;
+      bio: string | null;
+      phone: string | null;
+      isBookable: boolean;
+    }>,
   ) =>
     prisma.staffProfile.update({
       where: { id },
@@ -96,10 +174,83 @@ export const salonRepository = {
       include: { staffServices: true, availability: true },
     }),
 
-  listCustomers: () =>
+  updateStaffUser: (
+    userId: string,
+    data: Partial<{
+      email: string;
+      firstName: string;
+      lastName: string;
+      locale: string;
+      active: boolean;
+    }>,
+  ) => prisma.user.update({ where: { id: userId }, data }),
+
+  deleteStaff: async (id: string) => {
+    const staff = await prisma.staffProfile.findUnique({ where: { id }, select: { userId: true } });
+    if (!staff) return null;
+    await prisma.user.delete({ where: { id: staff.userId } });
+    return staff;
+  },
+
+  replaceStaffServices: (staffId: string, serviceIds: string[]) =>
+    prisma.$transaction(async (tx) => {
+      await tx.staffService.deleteMany({ where: { staffId } });
+      if (serviceIds.length > 0) {
+        await tx.staffService.createMany({
+          data: serviceIds.map((serviceId) => ({ staffId, serviceId })),
+        });
+      }
+      return tx.staffService.findMany({ where: { staffId }, include: { service: true } });
+    }),
+
+  replaceStaffAvailability: (
+    staffId: string,
+    rules: { dayOfWeek: number; startMin: number; endMin: number }[],
+  ) =>
+    prisma.$transaction(async (tx) => {
+      await tx.staffAvailabilityRule.deleteMany({ where: { staffId } });
+      if (rules.length > 0) {
+        await tx.staffAvailabilityRule.createMany({
+          data: rules.map((rule) => ({ staffId, ...rule })),
+        });
+      }
+      return tx.staffAvailabilityRule.findMany({
+        where: { staffId },
+        orderBy: [{ dayOfWeek: "asc" }, { startMin: "asc" }],
+      });
+    }),
+
+  createStaffTimeOff: (staffId: string, data: { startsAt: Date; endsAt: Date; reason?: string }) =>
+    prisma.staffTimeOff.create({ data: { staffId, ...data } }),
+
+  findStaffTimeOff: (staffId: string, id: string) =>
+    prisma.staffTimeOff.findFirst({ where: { id, staffId } }),
+
+  updateStaffTimeOff: (
+    staffId: string,
+    id: string,
+    data: Partial<{ startsAt: Date; endsAt: Date; reason: string | null }>,
+  ) => prisma.staffTimeOff.update({ where: { id, staffId }, data }),
+
+  deleteStaffTimeOff: (staffId: string, id: string) =>
+    prisma.staffTimeOff.delete({ where: { id, staffId } }),
+
+  listCustomers: (filters?: { query?: string; skip?: number; take?: number }) =>
     prisma.customer.findMany({
+      where: filters?.query
+        ? {
+            OR: [
+              { firstName: { contains: filters.query, mode: "insensitive" } },
+              { lastName: { contains: filters.query, mode: "insensitive" } },
+              { email: { contains: filters.query, mode: "insensitive" } },
+              { phone: { contains: filters.query, mode: "insensitive" } },
+            ],
+          }
+        : undefined,
       include: { appointments: true, notes: true, consents: true },
       orderBy: { createdAt: "desc" },
+      skip: filters?.skip,
+      take: filters?.take,
     }),
 
   findCustomerById: (id: string) =>
@@ -166,21 +317,32 @@ export const salonRepository = {
       },
     }),
 
-  listBlockedAppointments: (staffId: string | undefined, startsAt: Date, endsAt: Date) =>
-    prisma.appointment.findMany({
+  listBlockedAppointments: async (staffId: string | undefined, startsAt: Date, endsAt: Date) => {
+    const appointments = await prisma.appointment.findMany({
       where: {
         ...(staffId ? { staffId } : {}),
         status: { notIn: ["cancelled"] },
         startsAt: { lt: endsAt },
-        endsAt: { gt: startsAt },
       },
+      include: { service: { select: { bufferAfterMin: true } } },
       orderBy: { startsAt: "asc" },
-    }),
+    });
+    return appointments.filter(
+      (appointment) =>
+        addMinutes(appointment.endsAt, appointment.service.bufferAfterMin) > startsAt,
+    );
+  },
 
   findAppointmentById: (id: string) =>
     prisma.appointment.findUnique({
       where: { id },
-      include: { customer: true, service: { include: { translations: true } }, staff: true, payments: true, statusHistory: true },
+      include: {
+        customer: true,
+        service: { include: { translations: true } },
+        staff: true,
+        payments: true,
+        statusHistory: true,
+      },
     }),
 
   createAppointment: (input: {
@@ -210,6 +372,47 @@ export const salonRepository = {
       include: { customer: true, service: true, staff: true },
     }),
 
+  createAppointmentIfAvailable: (input: {
+    customerId: string;
+    serviceId: string;
+    staffId: string;
+    startsAt: Date;
+    endsAt: Date;
+    blockedEndsAt: Date;
+    locale: string;
+    sourceChannel: Channel;
+  }) =>
+    prisma.$transaction(
+      async (tx) => {
+        const candidates = await tx.appointment.findMany({
+          where: {
+            staffId: input.staffId,
+            status: { not: "cancelled" },
+            startsAt: { lt: input.blockedEndsAt },
+          },
+          include: { service: { select: { bufferAfterMin: true } } },
+        });
+        const conflict = candidates.some(
+          (item) => addMinutes(item.endsAt, item.service.bufferAfterMin) > input.startsAt,
+        );
+        if (conflict) throw new Error("SLOT_NOT_AVAILABLE");
+        return tx.appointment.create({
+          data: {
+            customerId: input.customerId,
+            serviceId: input.serviceId,
+            staffId: input.staffId,
+            startsAt: input.startsAt,
+            endsAt: input.endsAt,
+            locale: input.locale,
+            sourceChannel: input.sourceChannel,
+            statusHistory: { create: { status: "pending", reason: "initial booking" } },
+          },
+          include: { customer: true, service: true, staff: true },
+        });
+      },
+      { isolationLevel: "Serializable" },
+    ),
+
   updateAppointmentStatus: (appointmentId: string, status: AppointmentStatus, reason?: string) =>
     prisma.appointment.update({
       where: { id: appointmentId },
@@ -233,10 +436,88 @@ export const salonRepository = {
       include: { customer: true, service: true, staff: true },
     }),
 
-  listAppointments: () =>
+  rescheduleAppointmentIfAvailable: (
+    appointmentId: string,
+    staffId: string,
+    startsAt: Date,
+    endsAt: Date,
+    blockedEndsAt: Date,
+  ) =>
+    prisma.$transaction(
+      async (tx) => {
+        const candidates = await tx.appointment.findMany({
+          where: {
+            id: { not: appointmentId },
+            staffId,
+            status: { not: "cancelled" },
+            startsAt: { lt: blockedEndsAt },
+          },
+          include: { service: { select: { bufferAfterMin: true } } },
+        });
+        const conflict = candidates.some(
+          (item) => addMinutes(item.endsAt, item.service.bufferAfterMin) > startsAt,
+        );
+        if (conflict) throw new Error("SLOT_NOT_AVAILABLE");
+        return tx.appointment.update({
+          where: { id: appointmentId },
+          data: {
+            staffId,
+            startsAt,
+            endsAt,
+            status: "confirmed",
+            statusHistory: { create: { status: "confirmed", reason: "rescheduled" } },
+          },
+          include: { customer: true, service: true, staff: true },
+        });
+      },
+      { isolationLevel: "Serializable" },
+    ),
+
+  listAppointments: (filters?: {
+    from?: Date;
+    to?: Date;
+    statuses?: AppointmentStatus[];
+    staffId?: string;
+    customerId?: string;
+    serviceId?: string;
+    query?: string;
+    skip?: number;
+    take?: number;
+  }) =>
     prisma.appointment.findMany({
+      where: {
+        ...(filters?.from || filters?.to
+          ? {
+              startsAt: {
+                ...(filters.from ? { gte: filters.from } : {}),
+                ...(filters.to ? { lte: filters.to } : {}),
+              },
+            }
+          : {}),
+        ...(filters?.statuses?.length ? { status: { in: filters.statuses } } : {}),
+        ...(filters?.staffId ? { staffId: filters.staffId } : {}),
+        ...(filters?.customerId ? { customerId: filters.customerId } : {}),
+        ...(filters?.serviceId ? { serviceId: filters.serviceId } : {}),
+        ...(filters?.query
+          ? {
+              OR: [
+                {
+                  customer: {
+                    firstName: { contains: filters.query, mode: "insensitive" as const },
+                  },
+                },
+                {
+                  customer: { lastName: { contains: filters.query, mode: "insensitive" as const } },
+                },
+                { customer: { email: { contains: filters.query, mode: "insensitive" as const } } },
+              ],
+            }
+          : {}),
+      },
       include: { customer: true, service: true, staff: true, payments: true },
       orderBy: { startsAt: "asc" },
+      skip: filters?.skip,
+      take: filters?.take,
     }),
 
   listAppointmentsBetween: (from: Date, to: Date, statuses: AppointmentStatus[]) =>
@@ -263,9 +544,92 @@ export const salonRepository = {
       take: limit,
     }),
 
-  listProducts: () => prisma.product.findMany({ orderBy: { name: "asc" } }),
+  findNotificationLogById: (id: string) =>
+    prisma.notificationLog.findUnique({ where: { id }, include: { appointment: true } }),
 
-  listInventory: () => prisma.inventoryItem.findMany({ orderBy: { name: "asc" } }),
+  listNotifications: (limit = 50) =>
+    prisma.notificationLog.findMany({
+      include: { appointment: true },
+      orderBy: { createdAt: "desc" },
+      take: limit,
+    }),
+
+  listProducts: (filters?: { query?: string; lowStockAt?: number; skip?: number; take?: number }) =>
+    prisma.product.findMany({
+      where: {
+        ...(filters?.query
+          ? {
+              OR: [
+                { name: { contains: filters.query, mode: "insensitive" as const } },
+                { sku: { contains: filters.query, mode: "insensitive" as const } },
+              ],
+            }
+          : {}),
+        ...(filters?.lowStockAt === undefined ? {} : { stock: { lte: filters.lowStockAt } }),
+      },
+      include: { inventoryMovements: { orderBy: { createdAt: "desc" }, take: 10 } },
+      orderBy: { name: "asc" },
+      skip: filters?.skip,
+      take: filters?.take,
+    }),
+
+  findProductById: (id: string) =>
+    prisma.product.findUnique({
+      where: { id },
+      include: { inventoryMovements: { orderBy: { createdAt: "desc" } } },
+    }),
+
+  createProduct: (data: { sku: string; name: string; priceCents: number; stock: number }) =>
+    prisma.$transaction(async (tx) => {
+      const product = await tx.product.create({ data });
+      if (data.stock > 0) {
+        await tx.inventoryMovement.create({
+          data: {
+            productId: product.id,
+            delta: data.stock,
+            balanceAfter: data.stock,
+            reason: "initial stock",
+          },
+        });
+      }
+      return product;
+    }),
+
+  updateProduct: (id: string, data: Partial<{ sku: string; name: string; priceCents: number }>) =>
+    prisma.product.update({ where: { id }, data }),
+
+  deleteProduct: (id: string) => prisma.product.delete({ where: { id } }),
+
+  listProductInventoryMovements: (productId: string, limit = 100) =>
+    prisma.inventoryMovement.findMany({
+      where: { productId },
+      orderBy: { createdAt: "desc" },
+      take: limit,
+    }),
+
+  adjustProductStock: (
+    productId: string,
+    data: { quantity: number; type: InventoryMovementType; reason?: string },
+  ) =>
+    prisma.$transaction(async (tx) => {
+      const product = await tx.product.update({
+        where: { id: productId },
+        data: { stock: { increment: data.quantity } },
+      });
+      if (product.stock < 0) throw new Error("INSUFFICIENT_STOCK");
+      const movement = await tx.inventoryMovement.create({
+        data: {
+          productId,
+          delta: data.quantity,
+          type: data.type,
+          reason: data.reason,
+          balanceAfter: product.stock,
+        },
+      });
+      return { product, movement };
+    }),
+
+  listInventory: () => prisma.product.findMany({ orderBy: { name: "asc" } }),
 
   upsertConversationMessage: async (input: {
     channel: Channel;
@@ -323,21 +687,93 @@ export const salonRepository = {
     };
   },
 
-  getReportStats: async () => {
-    const [paid, pending, cancelled, upcoming] = await Promise.all([
-      prisma.payment.aggregate({ _sum: { amountCents: true }, where: { status: "paid" } }),
-      prisma.appointment.count({ where: { status: "pending" } }),
-      prisma.appointment.count({ where: { status: "cancelled" } }),
+  getReportStats: async (from?: Date, to?: Date) => {
+    const appointmentRange =
+      from || to
+        ? { startsAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } }
+        : {};
+    const paymentRange =
+      from || to
+        ? { createdAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } }
+        : {};
+    const [paid, pending, cancelled, upcoming, completed, noShows, breakdownAppointments, paidRows] = await Promise.all([
+      prisma.payment.aggregate({
+        _sum: { amountCents: true },
+        _count: true,
+        where: { status: "paid", ...paymentRange },
+      }),
+      prisma.appointment.count({ where: { status: "pending", ...appointmentRange } }),
+      prisma.appointment.count({ where: { status: "cancelled", ...appointmentRange } }),
       prisma.appointment.count({
-        where: { startsAt: { gte: new Date() }, status: { in: ["pending", "confirmed"] } },
+        where: {
+          startsAt: {
+            gte: from && from > new Date() ? from : new Date(),
+            ...(to ? { lte: to } : {}),
+          },
+          status: { in: ["pending", "confirmed"] },
+        },
+      }),
+      prisma.appointment.count({ where: { status: "completed", ...appointmentRange } }),
+      prisma.appointment.count({ where: { status: "no_show", ...appointmentRange } }),
+      prisma.appointment.findMany({
+        where: appointmentRange,
+        include: {
+          service: { include: { translations: true } },
+          staff: true,
+          payments: { where: { status: "paid" } },
+        },
+      }),
+      prisma.payment.findMany({
+        where: { status: "paid", ...paymentRange },
+        select: { amountCents: true, createdAt: true },
+        orderBy: { createdAt: "asc" },
       }),
     ]);
 
+    const serviceMap = new Map<string, { label: string; count: number; revenueCents: number }>();
+    const staffMap = new Map<string, { label: string; count: number; revenueCents: number }>();
+    for (const appointment of breakdownAppointments) {
+      const revenueCents = appointment.payments.reduce((sum, payment) => sum + payment.amountCents, 0);
+      const serviceLabel =
+        appointment.service.translations.find((translation) => translation.locale === "de")?.name ??
+        appointment.service.slug;
+      const serviceEntry = serviceMap.get(appointment.serviceId) ?? {
+        label: serviceLabel,
+        count: 0,
+        revenueCents: 0,
+      };
+      serviceEntry.count += 1;
+      serviceEntry.revenueCents += revenueCents;
+      serviceMap.set(appointment.serviceId, serviceEntry);
+      const staffKey = appointment.staffId ?? "unassigned";
+      const staffEntry = staffMap.get(staffKey) ?? {
+        label: appointment.staff?.displayName ?? "Unassigned",
+        count: 0,
+        revenueCents: 0,
+      };
+      staffEntry.count += 1;
+      staffEntry.revenueCents += revenueCents;
+      staffMap.set(staffKey, staffEntry);
+    }
+    const dayMap = new Map<string, number>();
+    for (const payment of paidRows) {
+      const label = payment.createdAt.toISOString().slice(0, 10);
+      dayMap.set(label, (dayMap.get(label) ?? 0) + payment.amountCents);
+    }
+
     return {
       revenueCents: paid._sum.amountCents ?? 0,
+      paidPayments: paid._count,
       pendingAppointments: pending,
       cancelledAppointments: cancelled,
       upcomingAppointments: upcoming,
+      completedAppointments: completed,
+      noShowAppointments: noShows,
+      byService: [...serviceMap.values()].sort((a, b) => b.count - a.count),
+      byStaff: [...staffMap.values()].sort((a, b) => b.count - a.count),
+      dailyRevenue: [...dayMap].map(([label, value]) => ({ label, value })),
+      from: from?.toISOString() ?? null,
+      to: to?.toISOString() ?? null,
     };
   },
 };
