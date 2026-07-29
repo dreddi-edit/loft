@@ -448,6 +448,17 @@ const OFFER_COPY: Record<AppLocale, { subject: string; body: string }> = {
   },
 };
 
+const OFFER_PLACEHOLDER = /{{(name|time|service|expires|link)}}/g;
+
+/**
+ * Filled through a replacer function rather than `String#replace` with a plain string:
+ * a customer whose first name contains `$&` would otherwise have the pattern itself
+ * substituted back in, corrupting the rest of the message and leaving the claim link out.
+ */
+function renderOfferBody(template: string, values: Record<string, string>): string {
+  return template.replace(OFFER_PLACEHOLDER, (placeholder, key: string) => values[key] ?? placeholder);
+}
+
 function claimUrlBase(locale: AppLocale, override?: string): string {
   const configured =
     override?.trim() ||
@@ -754,13 +765,16 @@ export class WaitlistService {
    *
    * Setting `limit: 1` degrades this to a strictly sequential exclusive offer for salons
    * that prefer it, with the next round handed out by `expire` + the next `notifyMatches`.
+   *
+   * There is deliberately no `windowFit` option here. Offers always use containment, so a
+   * customer is never sent a slot that starts before the time they said they could come;
+   * `overlap` stays where its docs put it, on the read-only `findMatches` admin path.
    */
   async notifyMatches(
     freedSlot: FreedSlot,
     options: {
       now?: Date;
       limit?: number;
-      windowFit?: WaitlistWindowFit;
       claimUrlBase?: string;
     } = {},
   ): Promise<WaitlistNotifyResult> {
@@ -784,11 +798,7 @@ export class WaitlistService {
       return { ...empty, aborted: "SLOT_TAKEN" };
     }
 
-    const matches = await this.findMatches(freedSlot, {
-      now,
-      windowFit: options.windowFit,
-      includeUnreachable: true,
-    });
+    const matches = await this.findMatches(freedSlot, { now, includeUnreachable: true });
 
     const offers: WaitlistOfferOutcome[] = [];
     const skipped: WaitlistNotifyResult["skipped"] = [];
@@ -836,15 +846,13 @@ export class WaitlistService {
         token,
       );
       const copy = OFFER_COPY[locale];
-      const message = copy.body
-        .replace("{{name}}", match.entry.customer.firstName)
-        .replace("{{time}}", formatSalonTimeRange(slot.startsAt, slot.endsAt, locale))
-        .replace("{{service}}", serviceLabel(match.entry, locale))
-        .replace(
-          "{{expires}}",
-          formatInSalonZone(expiresAt, locale, { hour: "2-digit", minute: "2-digit" }),
-        )
-        .replace("{{link}}", claimUrl);
+      const message = renderOfferBody(copy.body, {
+        name: match.entry.customer.firstName,
+        time: formatSalonTimeRange(slot.startsAt, slot.endsAt, locale),
+        service: serviceLabel(match.entry, locale),
+        expires: formatInSalonZone(expiresAt, locale, { hour: "2-digit", minute: "2-digit" }),
+        link: claimUrl,
+      });
 
       const delivery = await this.notifications.send({
         channel: match.target.channel,
@@ -941,12 +949,18 @@ export class WaitlistService {
       endsAt: addMinutes(claims.slotStartsAt, entry.service.durationMin),
     };
 
-    // A double-tapped confirmation link must show the booking, not an error.
+    // A double-tapped confirmation link must show the booking, not an error. A booking that
+    // has since been cancelled is not one: reporting `won` for it would tell the customer
+    // they hold a chair the salon has already given away.
     if (entry.status === "converted" && entry.convertedAppointmentId) {
       const existing = await prisma.appointment.findUnique({
         where: { id: entry.convertedAppointmentId },
       });
-      if (existing && existing.startsAt.getTime() === slot.startsAt.getTime()) {
+      if (
+        existing &&
+        existing.status !== "cancelled" &&
+        existing.startsAt.getTime() === slot.startsAt.getTime()
+      ) {
         return { won: true, entry, appointment: existing, alreadyClaimed: true };
       }
       return { won: false, reason: "OFFER_NOT_ACTIVE" };

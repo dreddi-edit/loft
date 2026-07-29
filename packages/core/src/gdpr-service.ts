@@ -39,11 +39,20 @@ import type {
 import type { AppLocale } from "@hair-simo/i18n";
 
 export const CUSTOMER_EXPORT_SCHEMA_VERSION = "hair-simo.gdpr.customer-export/1";
-export const ERASURE_RECEIPT_SCHEMA_VERSION = "hair-simo.gdpr.erasure-receipt/1";
+export const ERASURE_RECEIPT_SCHEMA_VERSION = "hair-simo.gdpr.erasure-receipt/2";
 export const MARKETING_CONSENT_TYPE = "marketing";
 
 /** Written over every free-text column that erasure cannot simply drop to NULL. */
 export const ERASURE_REDACTION_MARKER = "[redacted:gdpr-erasure]";
+
+/**
+ * Accountability columns have to keep recording that it was the data subject who acted
+ * or asked, without recording who the data subject is. Erasure requests routinely arrive
+ * from the person themselves, and `DataRequest.requestedBy` / `AuditLog.actorEmail` are
+ * retained under Art. 5(2) — so without this the erasure would leave, or even freshly
+ * write, a copy of the very address it just destroyed.
+ */
+export const ERASURE_SUBJECT_ACTOR = "data-subject";
 const ERASED_FIRST_NAME = "Erased";
 const ERASED_LAST_NAME_PREFIX = "Customer";
 const SYSTEM_ACTOR_EMAIL = "system@hairsimo.it";
@@ -60,6 +69,23 @@ function erasurePlaceholder(): string {
 
 function redactedJson(): { redacted: string } {
   return { redacted: "gdpr-erasure" };
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Free text supplied by the caller ("reason", "requestedBy") regularly quotes the
+ * subject's own address or number. Those two values are known exactly at erasure time,
+ * so they can be removed without guessing at prose.
+ */
+function scrubContacts(value: string, contacts: string[]): string {
+  return contacts.reduce(
+    (text, contact) =>
+      text.replace(new RegExp(escapeRegExp(contact), "gi"), ERASURE_REDACTION_MARKER),
+    value,
+  );
 }
 
 export class GdprError extends Error {
@@ -369,6 +395,7 @@ export type ErasureCounts = {
   appointmentsRedacted: number;
   statusHistoryRedacted: number;
   voucherNotesRedacted: number;
+  refundReasonsRedacted: number;
   consentMetadataRedacted: number;
   auditEntriesRedacted: number;
   recurringSeriesStopped: number;
@@ -677,6 +704,14 @@ export class GdprService {
     });
     const voucherIds = ids(vouchers);
 
+    const contacts = [customer.email, customer.phone].filter(
+      (value): value is string => typeof value === "string" && value.trim() !== "",
+    );
+    const notificationFilters = [
+      ...(appointmentIds.length ? [{ appointmentId: byIdChunk(appointmentIds) }] : []),
+      ...contacts.map((value) => ({ recipient: value })),
+    ];
+
     const [
       notes,
       statusHistory,
@@ -718,9 +753,12 @@ export class GdprService {
         where: { customerId: id },
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       }),
-      appointmentIds.length
+      // A newsletter or a booking confirmation for somebody else's slot reaches the
+      // subject by address, with no appointment of theirs attached. Erasure already
+      // treats those rows as the subject's data, so access has to disclose them too.
+      notificationFilters.length
         ? prisma.notificationLog.findMany({
-            where: { appointmentId: byIdChunk(appointmentIds) },
+            where: { OR: notificationFilters },
             orderBy: [{ createdAt: "asc" }, { id: "asc" }],
           })
         : Promise.resolve([]),
@@ -969,7 +1007,12 @@ export class GdprService {
       })),
       notifications: notifications.map((row) => ({
         id: row.id,
-        appointmentId: row.appointmentId,
+        // Same rule as a gifted voucher redemption: the message is the subject's, the
+        // third party's appointment it refers to is not.
+        appointmentId:
+          row.appointmentId !== null && appointmentIdSet.has(row.appointmentId)
+            ? row.appointmentId
+            : null,
         channel: row.channel,
         recipient: row.recipient,
         templateKey: row.templateKey,
@@ -1186,6 +1229,16 @@ export class GdprService {
       const contacts = [customer.email, customer.phone].filter(
         (value): value is string => typeof value === "string" && value.trim() !== "",
       );
+      const requesterIsSubject =
+        parsed.requestedBy !== undefined &&
+        scrubContacts(parsed.requestedBy, contacts) !== parsed.requestedBy;
+      const requestedBy =
+        parsed.requestedBy === undefined
+          ? null
+          : requesterIsSubject
+            ? ERASURE_SUBJECT_ACTOR
+            : parsed.requestedBy;
+      const reason = parsed.reason === undefined ? null : scrubContacts(parsed.reason, contacts);
 
       const notesDeleted = await tx.customerNote.deleteMany({ where: { customerId: id } });
 
@@ -1207,8 +1260,17 @@ export class GdprService {
         data: { externalRef: null },
       });
 
+      // A call that was never matched to the customer record still carries their number
+      // in `fromNumber`, and {@link GdprService.verifyErasure} looks for exactly that. The
+      // number is the link, so it selects the row just like it does for notifications.
       const callLogsRedacted = await tx.callLog.updateMany({
-        where: { customerId: id },
+        where: {
+          OR: [
+            { customerId: id },
+            ...contacts.map((value) => ({ fromNumber: value })),
+            ...contacts.map((value) => ({ toNumber: value })),
+          ],
+        },
         data: { summary: ERASURE_REDACTION_MARKER, fromNumber: null, toNumber: null },
       });
 
@@ -1248,6 +1310,18 @@ export class GdprService {
         where: { customerId: id },
         data: { metadata: redactedJson() },
       });
+
+      // Retained accountability rows keep saying "the subject did this" without saying who.
+      if (contacts.length) {
+        await tx.dataRequest.updateMany({
+          where: { customerId: id, OR: contacts.map((value) => ({ requestedBy: value })) },
+          data: { requestedBy: ERASURE_SUBJECT_ACTOR },
+        });
+        await tx.auditLog.updateMany({
+          where: { OR: contacts.map((value) => ({ actorEmail: value })) },
+          data: { actorEmail: ERASURE_SUBJECT_ACTOR },
+        });
+      }
 
       // `gdpr.*` entries are the proof that this erasure happened and must survive it.
       const auditRows = await tx.auditLog.findMany({
@@ -1316,6 +1390,16 @@ export class GdprService {
         : [];
       const paymentIds = ids(paymentRows);
 
+      // The amount, the date and the link to the payment are the accounting entry; the
+      // free-text justification a staff member typed next to it is not, and it is one of
+      // the few places where an address or a full name reliably ends up.
+      const refundReasonsRedacted = paymentIds.length
+        ? await tx.refund.updateMany({
+            where: { paymentId: byIdChunk(paymentIds), reason: { not: null } },
+            data: { reason: null },
+          })
+        : { count: 0 };
+
       const [refundCount, consentCount, redemptionCount, reviewCount, requestCount, auditCount] =
         await Promise.all([
           paymentIds.length
@@ -1338,8 +1422,8 @@ export class GdprService {
         erasedAt: stamp(customer.anonymizedAt ?? now, locale),
         timeZone: SALON_TIME_ZONE,
         alreadyErased,
-        requestedBy: parsed.requestedBy ?? null,
-        reason: parsed.reason ?? null,
+        requestedBy,
+        reason,
         identifiers: {
           emailCleared: true,
           phoneCleared: true,
@@ -1356,6 +1440,7 @@ export class GdprService {
           appointmentsRedacted: appointmentsRedacted.count,
           statusHistoryRedacted: statusHistoryRedacted.count,
           voucherNotesRedacted: voucherNotesRedacted.count,
+          refundReasonsRedacted: refundReasonsRedacted.count,
           consentMetadataRedacted: consentMetadataRedacted.count,
           auditEntriesRedacted: withBefore.length + withAfter.length,
           recurringSeriesStopped: recurringSeriesStopped.count,
@@ -1446,7 +1531,7 @@ export class GdprService {
               customerId: id,
               type: "erasure",
               status: "completed",
-              requestedBy: parsed.requestedBy ?? null,
+              requestedBy,
               completedAt: now,
               resultLocation,
             },
@@ -1458,7 +1543,10 @@ export class GdprService {
       await tx.auditLog.create({
         data: {
           actorId: null,
-          actorEmail: parsed.requestedBy ?? SYSTEM_ACTOR_EMAIL,
+          actorEmail:
+            requestedBy && requestedBy !== ERASURE_SUBJECT_ACTOR
+              ? requestedBy
+              : SYSTEM_ACTOR_EMAIL,
           actorRole: "system",
           action: "gdpr.customer.erasure",
           entityType: "customer",
@@ -1526,13 +1614,36 @@ export class GdprService {
       {
         dataClass: "customer",
         field: "lastName",
-        find: async (values) =>
-          (
+        // The needle is the full "First Last" string but the name is stored in two
+        // columns, so filtering `lastName contains "Anna Rossi"` matches nothing and the
+        // check never fires. Candidates are selected column by column and the full name
+        // is reassembled in memory, where the needle can actually match.
+        find: async (values) => {
+          const first = identifiers.firstName?.trim();
+          const last = identifiers.lastName?.trim();
+          const where = {
+            OR: [
+              ...containsAny(values, "firstName").OR,
+              ...containsAny(values, "lastName").OR,
+              ...(first && last
+                ? [
+                    {
+                      AND: [
+                        { firstName: { contains: first, mode: "insensitive" as const } },
+                        { lastName: { contains: last, mode: "insensitive" as const } },
+                      ],
+                    },
+                  ]
+                : []),
+            ],
+          };
+          return (
             await prisma.customer.findMany({
-              where: containsAny(values, "lastName"),
+              where,
               select: { id: true, firstName: true, lastName: true },
             })
-          ).map((row) => ({ id: row.id, value: `${row.firstName} ${row.lastName}` })),
+          ).map((row) => ({ id: row.id, value: `${row.firstName} ${row.lastName}` }));
+        },
       },
       {
         dataClass: "customerNote",
@@ -1654,6 +1765,28 @@ export class GdprService {
               select: { id: true, note: true },
             })
           ).map((row) => ({ id: row.id, value: row.note })),
+      },
+      {
+        dataClass: "refund",
+        field: "reason",
+        find: async (values) =>
+          (
+            await prisma.refund.findMany({
+              where: containsAny(values, "reason"),
+              select: { id: true, reason: true },
+            })
+          ).map((row) => ({ id: row.id, value: row.reason })),
+      },
+      {
+        dataClass: "dataRequest",
+        field: "requestedBy",
+        find: async (values) =>
+          (
+            await prisma.dataRequest.findMany({
+              where: containsAny(values, "requestedBy"),
+              select: { id: true, requestedBy: true },
+            })
+          ).map((row) => ({ id: row.id, value: row.requestedBy })),
       },
       {
         dataClass: "auditLog",
