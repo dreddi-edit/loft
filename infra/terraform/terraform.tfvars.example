@@ -1,18 +1,32 @@
 project_id  = "your-gcp-project-id"
-region      = "europe-west6"
+region      = "europe-west8"
 environment = "production"
+
+# Gemini is not served from every region. Keep this pointing at a region that actually
+# has the model even though it differs from var.region. See README.md "Region".
+vertex_location = "europe-west1"
 
 web_domain   = "hairsimo.example.com"
 admin_domain = "admin.hairsimo.example.com"
 
-alloydb_password = "CHANGE_ME_STRONG_PASSWORD"
-cron_secret      = "CHANGE_ME_CRON_SECRET"
+# Renamed from alloydb_password when the database moved to Cloud SQL.
+db_password = "CHANGE_ME_STRONG_PASSWORD"
+cron_secret = "CHANGE_ME_CRON_SECRET"
 
-enable_alloydb = true
+enable_database = true
+db_tier         = "db-g1-small"
 
 # Required in production. Both Cloud Run services only accept load balancer ingress,
 # so with this false nothing is publicly reachable and the reminder cron cannot run.
 enable_load_balancer = true
+
+# Cloud CDN in front of /_next/static, /images, /videos, /products and /brand.
+enable_cdn = true
+
+# 0 means the first visitor after an idle period pays a 2-3 s cold start. Set to 1 only
+# if you decide that is worth an always-on instance; see docs/GO-LIVE.md "Cold starts".
+web_min_instances   = 0
+admin_min_instances = 0
 
 # Narrow this to the salon and operator networks. ["0.0.0.0/0"] means the backoffice
 # is only protected by application login and the WAF rules.
@@ -23,7 +37,7 @@ alert_email       = "ops@hairsimo.example.com"
 
 alert_5xx_threshold                  = 5
 alert_latency_p95_ms                 = 2000
-alert_alloydb_cpu_threshold          = 0.85
+alert_db_cpu_threshold               = 0.85
 alert_pubsub_unacked_seconds         = 600
 alert_payment_failure_threshold      = 3
 alert_notification_failure_threshold = 3

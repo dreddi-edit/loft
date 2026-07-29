@@ -1,64 +1,77 @@
-import { NextRequest, NextResponse } from "next/server";
 import { BookingService, salonRepository } from "@hair-simo/core";
 import { z } from "zod";
-import { requireSession } from "../../../lib/auth";
+import {
+  adminRoute,
+  paginated,
+  paginationShape,
+  recordStatusHistoryActor,
+} from "../../../lib/admin-api";
 
 const bookingService = new BookingService();
+
 const statusSchema = z.enum(["pending", "confirmed", "cancelled", "completed", "no_show"]);
-const querySchema = z
+
+const listQuerySchema = z
   .object({
     from: z.string().datetime().optional(),
     to: z.string().datetime().optional(),
-    status: z.string().optional(),
+    status: z.string().trim().max(200).optional(),
     staffId: z.string().trim().min(1).optional(),
     customerId: z.string().trim().min(1).optional(),
     serviceId: z.string().trim().min(1).optional(),
     query: z.string().trim().max(200).optional(),
-    offset: z.coerce.number().int().nonnegative().default(0),
-    limit: z.coerce.number().int().min(1).max(100).default(50),
+    ...paginationShape,
   })
   .strict();
 
-export async function GET(request: NextRequest) {
-  try {
-    await requireSession(request, ["owner", "manager", "staff"]);
-    const input = querySchema.parse(Object.fromEntries(request.nextUrl.searchParams));
-    const statuses = input.status
-      ? input.status
+/** The booking service owns the field-level schema; the wrapper only asserts an object. */
+const createBodySchema = z.record(z.string(), z.unknown());
+
+export const GET = adminRoute(
+  { roles: ["owner", "manager", "staff"], route: "/api/appointments", query: listQuerySchema },
+  async ({ query }) => {
+    const statuses = query.status
+      ? query.status
           .split(",")
           .filter(Boolean)
           .map((status) => statusSchema.parse(status))
       : undefined;
     const appointments = await salonRepository.listAppointments({
-      from: input.from ? new Date(input.from) : undefined,
-      to: input.to ? new Date(input.to) : undefined,
+      from: query.from ? new Date(query.from) : undefined,
+      to: query.to ? new Date(query.to) : undefined,
       statuses,
-      staffId: input.staffId,
-      customerId: input.customerId,
-      serviceId: input.serviceId,
-      query: input.query,
-      skip: input.offset,
-      take: input.limit,
+      staffId: query.staffId,
+      customerId: query.customerId,
+      serviceId: query.serviceId,
+      query: query.query,
+      skip: query.offset,
+      take: query.limit,
     });
-    return NextResponse.json({ data: appointments });
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "AUTH_ERROR" },
-      { status: 403 },
-    );
-  }
-}
+    return paginated(appointments, query);
+  },
+);
 
-export async function POST(request: NextRequest) {
-  try {
-    await requireSession(request, ["owner", "manager", "staff"]);
-    const body = await request.json();
+export const POST = adminRoute(
+  {
+    roles: ["owner", "manager", "staff"],
+    route: "/api/appointments",
+    schema: createBodySchema,
+    successStatus: 201,
+    audit: { entityType: "appointment", action: "appointment.create" },
+  },
+  async ({ body, session, audit, log }) => {
     const appointment = await bookingService.createBooking(body);
-    return NextResponse.json({ data: appointment }, { status: 201 });
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "CREATE_FAILED" },
-      { status: 400 },
-    );
-  }
-}
+    await recordStatusHistoryActor(appointment.id, session, log);
+    audit.setEntityId(appointment.id);
+    audit.setAfter({
+      id: appointment.id,
+      status: appointment.status,
+      startsAt: appointment.startsAt,
+      endsAt: appointment.endsAt,
+      customerId: appointment.customerId,
+      serviceId: appointment.serviceId,
+      staffId: appointment.staffId,
+    });
+    return { data: appointment };
+  },
+);

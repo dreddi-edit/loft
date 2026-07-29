@@ -16,8 +16,23 @@ output "admin_public_url" {
   value = "https://${var.admin_domain}"
 }
 
-output "alloydb_cluster" {
-  value = var.enable_alloydb ? google_alloydb_cluster.primary[0].name : null
+output "database_instance" {
+  value = var.enable_database ? google_sql_database_instance.primary[0].name : null
+}
+
+output "database_private_ip" {
+  value       = var.enable_database ? google_sql_database_instance.primary[0].private_ip_address : null
+  description = "Only reachable from inside hair-simo-vpc, which is what Cloud Run Direct VPC egress joins."
+}
+
+output "database_connection_name" {
+  value       = var.enable_database ? google_sql_database_instance.primary[0].connection_name : null
+  description = "project:region:instance, for cloud-sql-proxy when running migrations from a workstation."
+}
+
+output "database_url_hint" {
+  value       = var.enable_database ? "postgresql://${var.db_user}:<PASSWORD>@${google_sql_database_instance.primary[0].private_ip_address}:5432/${var.db_name}?sslmode=require&connection_limit=4&pool_timeout=20" : null
+  description = "Template for the hair-simo-database-url secret version. Substitute var.db_password. connection_limit must stay below db_max_connections / (web_max_instances + admin_max_instances)."
 }
 
 output "pubsub_topic" {
@@ -57,6 +72,11 @@ output "armor_policy" {
 
 output "admin_armor_policy" {
   value = google_compute_security_policy.admin_armor.name
+}
+
+output "cdn_enabled" {
+  value       = var.enable_load_balancer && var.enable_cdn
+  description = "Cloud CDN fronts /_next/static, /images, /videos, /products and /brand."
 }
 
 output "uptime_check_id" {

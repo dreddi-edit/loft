@@ -33,3 +33,6 @@ application_default_credentials.json
 # os / editor
 .DS_Store
 *.swp
+
+# scratch output from other tooling
+.codex/

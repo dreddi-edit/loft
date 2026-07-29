@@ -1,9 +1,25 @@
-import { NextRequest, NextResponse } from "next/server";
 import { salonRepository } from "@hair-simo/core";
 import { z } from "zod";
-import { requireSession } from "../../../lib/auth";
+import { adminRoute } from "../../../lib/admin-api";
 
-const schema = z
+const translationSchema = z
+  .object({
+    id: z.string().optional(),
+    serviceId: z.string().optional(),
+    createdAt: z.string().optional(),
+    updatedAt: z.string().optional(),
+    locale: z.enum(["de", "it", "fr", "en"]),
+    name: z.string().trim().min(1).max(200),
+    description: z.string().trim().max(5000),
+  })
+  .strict()
+  .transform((translation) => ({
+    locale: translation.locale,
+    name: translation.name,
+    description: translation.description,
+  }));
+
+const createServiceSchema = z
   .object({
     slug: z
       .string()
@@ -15,44 +31,44 @@ const schema = z
     durationMin: z.number().int().min(5).max(720),
     bufferAfterMin: z.number().int().min(0).max(180).default(10),
     priceCents: z.number().int().nonnegative(),
-    translations: z
-      .array(
-        z
-          .object({
-            locale: z.enum(["de", "it", "fr", "en"]),
-            name: z.string().trim().min(1).max(200),
-            description: z.string().trim().max(5000),
-          })
-          .strict(),
-      )
-      .min(1)
-      .max(4),
+    // A service is created active; the flag exists so the editor can post its own draft
+    // state back without a field-level rejection.
+    isActive: z.boolean().optional(),
+    translations: z.array(translationSchema).min(1).max(4),
   })
   .strict();
 
-export async function GET(request: NextRequest) {
-  try {
-    await requireSession(request, ["owner", "manager", "staff"]);
-    const services = await salonRepository.listServices(true);
-    return NextResponse.json({ data: services });
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "AUTH_ERROR" },
-      { status: 403 },
-    );
-  }
-}
+export const GET = adminRoute(
+  { roles: ["owner", "manager", "staff"], route: "/api/services" },
+  async () => ({ data: await salonRepository.listServices(true) }),
+);
 
-export async function POST(request: NextRequest) {
-  try {
-    await requireSession(request, ["owner", "manager"]);
-    const input = schema.parse(await request.json());
-    const service = await salonRepository.createService(input);
-    return NextResponse.json({ data: service }, { status: 201 });
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "CREATE_FAILED" },
-      { status: 400 },
-    );
-  }
-}
+export const POST = adminRoute<z.infer<typeof createServiceSchema>>(
+  {
+    roles: ["owner", "manager"],
+    route: "/api/services",
+    schema: createServiceSchema,
+    successStatus: 201,
+    audit: { entityType: "service", action: "service.create" },
+  },
+  async ({ body, audit }) => {
+    const service = await salonRepository.createService({
+      slug: body.slug,
+      category: body.category,
+      durationMin: body.durationMin,
+      bufferAfterMin: body.bufferAfterMin,
+      priceCents: body.priceCents,
+      translations: body.translations,
+    });
+    audit.setEntityId(service.id);
+    audit.setAfter({
+      id: service.id,
+      slug: service.slug,
+      category: service.category,
+      durationMin: service.durationMin,
+      bufferAfterMin: service.bufferAfterMin,
+      priceCents: service.priceCents,
+    });
+    return { data: service };
+  },
+);

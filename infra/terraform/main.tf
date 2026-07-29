@@ -39,6 +39,22 @@ locals {
 
   pubsub_service_agent = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-pubsub.iam.gserviceaccount.com"
 
+  # One year. Next.js emits content-hashed filenames under /_next/static, so a URL that
+  # exists today never changes content and a deploy simply mints new URLs.
+  cdn_immutable_ttl = 31536000
+
+  cdn_immutable_paths = ["/_next/static/*"]
+
+  # Hand-managed files under apps/web/public. Names are stable across deploys, so these
+  # get a shorter TTL and need an invalidation when a file is replaced in place.
+  cdn_media_paths = [
+    "/images/*",
+    "/videos/*",
+    "/products/*",
+    "/brand/*",
+    "/favicon.ico",
+  ]
+
   # Google preconfigured OWASP CRS rule sets, evaluated after the rate limit rule.
   owasp_rules = {
     "sqli-v33-stable"             = 1100

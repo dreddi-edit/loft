@@ -1,9 +1,29 @@
-import { NextRequest, NextResponse } from "next/server";
 import { aiRequestSchema, runAssistant } from "@hair-simo/ai";
 import { salonRepository } from "@hair-simo/core";
-import { aiTools } from "../../../../lib/ai-tools";
-import { checkRateLimit } from "../../../../lib/rate-limit";
+import { z } from "zod";
+import { createAiTools } from "../../../../lib/ai-tools";
+import { apiRoute } from "../../../../lib/api-handler";
 import { davinesProducts } from "../../../../lib/site-content";
+import { MAX_CHAT_TEXT_LENGTH } from "../../_lib/chat-channel";
+
+const CHAT_WEB_BODY_LIMIT_BYTES = 16_384;
+const MAX_HISTORY_TURNS = 10;
+
+const chatWebSchema = aiRequestSchema.extend({
+  text: z.string().trim().min(1).max(MAX_CHAT_TEXT_LENGTH),
+  customerId: z.string().trim().min(1).max(64).optional(),
+  serviceId: z.string().trim().min(1).max(100).optional(),
+  appointmentId: z.string().trim().min(1).max(64).optional(),
+  conversationHistory: z
+    .array(
+      z.object({
+        role: z.enum(["user", "model"]),
+        text: z.string().trim().max(MAX_CHAT_TEXT_LENGTH),
+      }),
+    )
+    .max(MAX_HISTORY_TURNS)
+    .optional(),
+});
 
 type ChatAction = {
   label: string;
@@ -117,46 +137,51 @@ async function buildServiceSuggestion(locale: string) {
   return `${L(locale).servicesIntro}\n- ${names.join("\n- ")}\n\n${L(locale).askService}`;
 }
 
-export async function POST(request: NextRequest) {
-  const client = request.headers.get("x-forwarded-for") ?? "unknown";
-  if (!checkRateLimit(`chat-web:${client}`)) {
-    return NextResponse.json({ error: "RATE_LIMITED" }, { status: 429 });
-  }
-  try {
-    const payload = aiRequestSchema.parse(await request.json());
-    const result = await runAssistant(payload, aiTools);
-    const locale = payload.locale ?? result.locale;
-    const serviceQuestion = /leistung|service|services|angebot|menu|prestation|servizi|servizio/i.test(payload.text.toLowerCase());
+export const POST = apiRoute<z.infer<typeof chatWebSchema>>(
+  {
+    route: "/api/chat/web",
+    methods: ["POST"],
+    policy: "chat",
+    bodyLimitBytes: CHAT_WEB_BODY_LIMIT_BYTES,
+    schema: chatWebSchema,
+  },
+  async ({ body, clientIp }) => {
+    const result = await runAssistant(body, createAiTools(body.locale));
+    const locale = body.locale ?? result.locale;
+    const serviceQuestion =
+      /leistung|service|services|angebot|menu|prestation|servizi|servizio/i.test(
+        body.text.toLowerCase(),
+      );
     const responseText = serviceQuestion ? await buildServiceSuggestion(locale) : result.response;
     const actions = [
-      ...buildBookingActions(locale, payload.text),
-      ...buildProductActions(locale, payload.text),
+      ...buildBookingActions(locale, body.text),
+      ...buildProductActions(locale, body.text),
     ];
-    if (serviceQuestion) actions.unshift({ label: L(locale).showPrices, href: `/${locale}/services` });
+    if (serviceQuestion) {
+      actions.unshift({ label: L(locale).showPrices, href: `/${locale}/services` });
+    }
     const fallbackActions = actions.length > 0 ? actions : buildDefaultActions(locale);
 
+    // The conversation is keyed on the resolved client address, never on the raw
+    // x-forwarded-for header a caller can set to anything it likes.
+    const externalRef = body.customerId ? `web:${body.customerId}` : `web:${clientIp.key}`;
     await salonRepository.upsertConversationMessage({
       channel: "web",
-      locale: payload.locale ?? result.locale,
-      customerId: payload.customerId,
+      locale,
+      customerId: body.customerId,
       role: "user",
-      content: payload.text,
-      externalRef: payload.customerId ? `web:${payload.customerId}` : `web:${client}`,
+      content: body.text,
+      externalRef,
     });
     await salonRepository.upsertConversationMessage({
       channel: "web",
       locale: result.locale,
-      customerId: payload.customerId,
+      customerId: body.customerId,
       role: "assistant",
       content: responseText,
-      externalRef: payload.customerId ? `web:${payload.customerId}` : `web:${client}`,
+      externalRef,
     });
 
-    return NextResponse.json({ data: { ...result, response: responseText, actions: fallbackActions } });
-  } catch (error) {
-    return NextResponse.json(
-      { error: "CHAT_REQUEST_FAILED", message: error instanceof Error ? error.message : "unknown error" },
-      { status: 400 },
-    );
-  }
-}
+    return { data: { ...result, response: responseText, actions: fallbackActions } };
+  },
+);

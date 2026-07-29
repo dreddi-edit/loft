@@ -1,24 +1,38 @@
-import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import { apiRoute } from "../../../../lib/api-handler";
 
-export async function POST(request: NextRequest) {
-  try {
-    const form = await request.formData();
-    const audioFile = form.get("audio");
-    if (!(audioFile instanceof Blob)) {
-      return NextResponse.json({ error: "AUDIO_REQUIRED" }, { status: 400 });
-    }
+/**
+ * Speech-to-Text `recognize` only accepts short utterances anyway, so one megabyte is
+ * already generous for a salon question. The cap matters because it is enforced while the
+ * body streams in: the previous version called `Buffer.from(await blob.arrayBuffer())` on
+ * whatever arrived, which lets one request exhaust the Cloud Run instance memory.
+ */
+const MAX_AUDIO_UPLOAD_BYTES = 1_048_576;
 
-    const buffer = Buffer.from(await audioFile.arrayBuffer());
-    const encoding = String(form.get("encoding") ?? "WEBM_OPUS") as "LINEAR16" | "OGG_OPUS" | "MP3" | "WEBM_OPUS";
-    const sampleRateHertz = Number(form.get("sampleRateHertz") ?? 48000);
+const transcribeSchema = z.object({
+  audio: z.instanceof(Blob),
+  encoding: z.enum(["LINEAR16", "OGG_OPUS", "MP3", "WEBM_OPUS"]).default("WEBM_OPUS"),
+  sampleRateHertz: z.coerce.number().int().min(8_000).max(48_000).default(48_000),
+});
 
+export const POST = apiRoute<z.infer<typeof transcribeSchema>>(
+  {
+    route: "/api/voice/transcribe",
+    methods: ["POST"],
+    policy: "voice",
+    accept: ["form"],
+    uploadLimitBytes: MAX_AUDIO_UPLOAD_BYTES,
+    schema: transcribeSchema,
+  },
+  async ({ body }) => {
+    const audioContent = Buffer.from(await body.audio.arrayBuffer());
     const { transcribeAudio } = await import("@hair-simo/gcp/speech-to-text");
-    const result = await transcribeAudio({ audioContent: buffer, encoding, sampleRateHertz });
-    return NextResponse.json({ data: result });
-  } catch (error) {
-    return NextResponse.json(
-      { error: "STT_FAILED", message: error instanceof Error ? error.message : "unknown error" },
-      { status: 400 },
-    );
-  }
-}
+    return {
+      data: await transcribeAudio({
+        audioContent,
+        encoding: body.encoding,
+        sampleRateHertz: body.sampleRateHertz,
+      }),
+    };
+  },
+);

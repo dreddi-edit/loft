@@ -4,6 +4,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { AppLocale } from "@hair-simo/i18n";
 import { t } from "@hair-simo/i18n";
 import { Badge, Button, Card, Input, PageHeader, Select } from "@hair-simo/ui";
+import {
+  SALON_TIME_ZONE,
+  formatSalonClock,
+  formatSalonClockWithZone,
+  formatSalonDateTime,
+  isSalonDayKey,
+  salonTodayKey,
+} from "../lib/web-datetime";
 
 type Service = {
   id: string;
@@ -25,6 +33,13 @@ type PublicConfig = {
 
 const steps = ["service", "stylist", "datetime", "details", "payment"] as const;
 
+const timeZoneNotice: Record<AppLocale, string> = {
+  de: `Alle Zeiten in Ortszeit Brixen (${SALON_TIME_ZONE}).`,
+  it: `Tutti gli orari sono nell'ora locale di Bressanone (${SALON_TIME_ZONE}).`,
+  fr: `Tous les horaires sont a l'heure locale de Bressanone (${SALON_TIME_ZONE}).`,
+  en: `All times are in Brixen local time (${SALON_TIME_ZONE}).`,
+};
+
 export function BookingWizard({ locale }: { locale: AppLocale }) {
   const [stepIndex, setStepIndex] = useState(0);
   const [services, setServices] = useState<Service[]>([]);
@@ -40,7 +55,7 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
 
   const [serviceSlug, setServiceSlug] = useState("");
   const [staffId, setStaffId] = useState("");
-  const [day, setDay] = useState(new Date().toISOString().slice(0, 10));
+  const [day, setDay] = useState(() => salonTodayKey());
   const [startsAt, setStartsAt] = useState("");
   const [email, setEmail] = useState("");
   const [firstName, setFirstName] = useState("");
@@ -83,7 +98,7 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
     const requestedService = params.get("service");
     const requestedDate = params.get("date");
     if (requestedService) setServiceSlug(requestedService);
-    if (requestedDate) setDay(requestedDate);
+    if (requestedDate && isSalonDayKey(requestedDate)) setDay(requestedDate.trim());
   }, []);
 
   useEffect(() => {
@@ -119,10 +134,9 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
     setLoading(true);
     setError(null);
     try {
-      const query = new URLSearchParams({
-        serviceSlug,
-        day: new Date(`${day}T09:00:00.000Z`).toISOString(),
-      });
+      // The salon day key is sent as-is: an instant would have to guess an hour, and any
+      // guess lands on the wrong salon day for part of the world.
+      const query = new URLSearchParams({ serviceSlug, day });
       if (staffId) query.set("staffId", staffId);
       const response = await fetch(`/api/availability?${query.toString()}`);
       const json = await response.json();
@@ -185,7 +199,6 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
           appointmentId,
           serviceSlug,
           mode: paymentMode,
-          depositPercentage: 30,
         }),
       });
       const json = await response.json();
@@ -294,7 +307,7 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
               <option value="">{loading ? "Lade Zeiten..." : "Bitte Slot waehlen"}</option>
               {slots.map((slot) => (
                 <option key={slot.startsAt} value={slot.startsAt}>
-                  {new Date(slot.startsAt).toLocaleString(locale)}
+                  {formatSalonDateTime(slot.startsAt, locale)}
                 </option>
               ))}
             </Select>
@@ -306,10 +319,13 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
                   className={`hs-booking-slot ${startsAt === slot.startsAt ? "active" : ""}`}
                   onClick={() => setStartsAt(slot.startsAt)}
                 >
-                  {new Date(slot.startsAt).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" })}
+                  {formatSalonClock(slot.startsAt, locale)}
                 </button>
               ))}
             </div>
+            <p style={{ color: "var(--hs-muted)", gridColumn: "1 / -1", margin: 0 }}>
+              {timeZoneNotice[locale]}
+            </p>
           </div>
         ) : null}
 
@@ -396,7 +412,7 @@ export function BookingWizard({ locale }: { locale: AppLocale }) {
         <p><strong>Service:</strong> {selectedService?.translations.find((tr) => tr.locale === locale)?.name ?? "-"}</p>
         <p><strong>Mitarbeiterin:</strong> {selectedStaff?.displayName ?? t(locale, "booking_any_stylist")}</p>
         <p><strong>Datum:</strong> {day || "-"}</p>
-        <p><strong>Zeit:</strong> {startsAt ? new Date(startsAt).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" }) : "-"}</p>
+        <p><strong>Zeit:</strong> {startsAt ? formatSalonClockWithZone(startsAt, locale) : "-"}</p>
         <p><strong>Preis:</strong> {selectedService ? `${(selectedService.priceCents / 100).toFixed(2)} EUR` : "-"}</p>
         <p style={{ color: "var(--hs-muted)", marginBottom: 0 }}>Status: {loading ? "wird verarbeitet..." : "bereit"}</p>
       </Card>

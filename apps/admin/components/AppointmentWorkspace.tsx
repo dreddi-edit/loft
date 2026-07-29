@@ -2,6 +2,13 @@
 
 import { FormEvent, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import type { AppLocale } from "@hair-simo/i18n";
+import {
+  dateTimeLocalToIso,
+  formatSalonDate,
+  formatSalonTime,
+  toDateTimeLocalValue,
+} from "../lib/admin-datetime";
 import { AppointmentActions } from "./AppointmentActions";
 
 type Appointment = {
@@ -27,10 +34,12 @@ export function AppointmentWorkspace({
   appointments,
   services,
   staff,
+  locale,
 }: {
   appointments: Appointment[];
   services: Service[];
   staff: Staff[];
+  locale: AppLocale;
 }) {
   const router = useRouter();
   const params = useSearchParams();
@@ -42,7 +51,7 @@ export function AppointmentWorkspace({
   const [form, setForm] = useState({
     serviceSlug: services[0]?.slug ?? "",
     staffId: "",
-    startsAt: new Date(Date.now() + 86_400_000).toISOString().slice(0, 16),
+    startsAt: toDateTimeLocalValue(Date.now() + 86_400_000),
     customerFirstName: "",
     customerLastName: "",
     customerEmail: "",
@@ -71,7 +80,7 @@ export function AppointmentWorkspace({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         ...form,
-        startsAt: new Date(form.startsAt).toISOString(),
+        startsAt: dateTimeLocalToIso(form.startsAt),
         staffId: form.staffId || undefined,
         locale: "de",
         sourceChannel: "web",
@@ -138,9 +147,9 @@ export function AppointmentWorkspace({
             {filtered.map((appointment) => (
               <tr key={appointment.id}>
                 <td>
-                  <strong>{new Date(appointment.startsAt).toLocaleDateString("de-IT")}</strong>
+                  <strong>{formatSalonDate(appointment.startsAt, locale)}</strong>
                   <small className="admin-table-subline">
-                    {new Date(appointment.startsAt).toLocaleTimeString("de-IT", { hour: "2-digit", minute: "2-digit" })}
+                    {formatSalonTime(appointment.startsAt, locale)}
                   </small>
                 </td>
                 <td>

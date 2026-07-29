@@ -1,7 +1,14 @@
-import { NextRequest, NextResponse } from "next/server";
 import { salonRepository } from "@hair-simo/core";
 import { z } from "zod";
-import { requireSession } from "../../../lib/auth";
+import { adminRoute, httpError, paginated, paginationShape } from "../../../lib/admin-api";
+
+const listQuerySchema = z
+  .object({
+    query: z.string().trim().max(200).optional(),
+    lowStockAt: z.coerce.number().int().min(0).max(1_000_000).optional(),
+    ...paginationShape,
+  })
+  .strict();
 
 const createProductSchema = z
   .object({
@@ -12,38 +19,33 @@ const createProductSchema = z
   })
   .strict();
 
-export async function GET(request: NextRequest) {
-  try {
-    await requireSession(request, ["owner", "manager", "staff"]);
-    const search = request.nextUrl.searchParams;
+export const GET = adminRoute(
+  { roles: ["owner", "manager", "staff"], route: "/api/products", query: listQuerySchema },
+  async ({ query }) => {
     const data = await salonRepository.listProducts({
-      query: search.get("query")?.trim() || undefined,
-      lowStockAt: search.has("lowStockAt") ? Number(search.get("lowStockAt")) : undefined,
-      skip: Math.max(0, Number(search.get("offset") ?? 0)),
-      take: Math.min(100, Math.max(1, Number(search.get("limit") ?? 50))),
+      query: query.query,
+      lowStockAt: query.lowStockAt,
+      skip: query.offset,
+      take: query.limit,
     });
-    return NextResponse.json({ data });
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "AUTH_ERROR" },
-      { status: 403 },
-    );
-  }
-}
+    return paginated(data, query);
+  },
+);
 
-export async function POST(request: NextRequest) {
-  try {
-    await requireSession(request, ["owner", "manager"]);
-    const input = createProductSchema.parse(await request.json());
-    const product = await salonRepository.createProduct(input);
-    return NextResponse.json(
-      { data: await salonRepository.findProductById(product.id) },
-      { status: 201 },
-    );
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "CREATE_FAILED" },
-      { status: 400 },
-    );
-  }
-}
+export const POST = adminRoute<z.infer<typeof createProductSchema>>(
+  {
+    roles: ["owner", "manager"],
+    route: "/api/products",
+    schema: createProductSchema,
+    successStatus: 201,
+    audit: { entityType: "product", action: "product.create" },
+  },
+  async ({ body, audit }) => {
+    const created = await salonRepository.createProduct(body);
+    const data = await salonRepository.findProductById(created.id);
+    if (!data) throw httpError("NOT_FOUND", { logMessage: `product ${created.id} vanished` });
+    audit.setEntityId(data.id);
+    audit.setAfter({ id: data.id, sku: data.sku, name: data.name, priceCents: data.priceCents, stock: data.stock });
+    return { data };
+  },
+);

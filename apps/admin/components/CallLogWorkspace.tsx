@@ -1,6 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import type { AppLocale } from "@hair-simo/i18n";
+import { formatSalonDateTime } from "../lib/admin-datetime";
 
 type CallLog = {
   id: string;
@@ -14,7 +16,7 @@ type CallLog = {
   customer: { firstName: string; lastName: string; phone: string | null } | null;
 };
 
-export function CallLogWorkspace({ calls }: { calls: CallLog[] }) {
+export function CallLogWorkspace({ calls, locale }: { calls: CallLog[]; locale: AppLocale }) {
   const [query, setQuery] = useState("");
   const [fallbackOnly, setFallbackOnly] = useState(false);
   const visible = useMemo(() => {
@@ -37,7 +39,7 @@ export function CallLogWorkspace({ calls }: { calls: CallLog[] }) {
       <section className="admin-timeline">
         {visible.map((entry) => (
           <article key={entry.id}>
-            <time>{new Date(entry.createdAt).toLocaleString("en")}</time>
+            <time>{formatSalonDateTime(entry.createdAt, locale)}</time>
             <div>
               <span className="admin-kicker">{entry.locale} · {entry.fromNumber ?? "Unknown caller"}</span>
               <h2>{entry.summary}</h2>

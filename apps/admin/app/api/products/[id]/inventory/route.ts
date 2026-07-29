@@ -1,7 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
 import { salonRepository } from "@hair-simo/core";
+import { prisma } from "@hair-simo/db";
 import { z } from "zod";
-import { requireSession } from "../../../../../lib/auth";
+import { adminRoute, httpError, paginated, paginationSchema } from "../../../../../lib/admin-api";
 
 export const inventoryAdjustmentSchema = z
   .object({
@@ -14,40 +14,48 @@ export const inventoryAdjustmentSchema = z
   })
   .strict();
 
-export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    await requireSession(request, ["owner", "manager", "staff"]);
-    const { id } = await params;
-    const limit = Math.min(
-      500,
-      Math.max(1, Number(request.nextUrl.searchParams.get("limit") ?? 100)),
-    );
-    return NextResponse.json({
-      data: await salonRepository.listProductInventoryMovements(id, limit),
+export const GET = adminRoute<unknown, z.infer<typeof paginationSchema>, { id: string }>(
+  {
+    roles: ["owner", "manager", "staff"],
+    route: "/api/products/[id]/inventory",
+    query: paginationSchema,
+  },
+  async ({ params, query }) => {
+    // `salonRepository.listProductInventoryMovements` takes a limit but no offset, so a
+    // stock history longer than one page could not be walked through it.
+    const movements = await prisma.inventoryMovement.findMany({
+      where: { productId: params.id },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      skip: query.offset,
+      take: query.limit,
     });
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "AUTH_ERROR" },
-      { status: 403 },
-    );
-  }
-}
+    return paginated(movements, query);
+  },
+);
 
-export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    await requireSession(request, ["owner", "manager"]);
-    const { id } = await params;
-    const input = inventoryAdjustmentSchema.parse(await request.json());
-    return NextResponse.json(
-      {
-        data: await salonRepository.adjustProductStock(id, input),
-      },
-      { status: 201 },
-    );
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "UPDATE_FAILED" },
-      { status: 400 },
-    );
-  }
-}
+export const POST = adminRoute<z.infer<typeof inventoryAdjustmentSchema>, undefined, { id: string }>(
+  {
+    roles: ["owner", "manager"],
+    route: "/api/products/[id]/inventory",
+    schema: inventoryAdjustmentSchema,
+    successStatus: 201,
+    audit: {
+      entityType: "product",
+      action: "product.inventoryAdjustment",
+      entityId: (params) => params.id,
+    },
+  },
+  async ({ body, params, audit }) => {
+    const current = await salonRepository.findProductById(params.id);
+    if (!current) throw httpError("NOT_FOUND", { logMessage: `product ${params.id} not found` });
+    audit.setBefore({ stock: current.stock });
+    const data = await salonRepository.adjustProductStock(params.id, body);
+    audit.setAfter({
+      stock: data.product.stock,
+      delta: data.movement.delta,
+      type: data.movement.type,
+      reason: data.movement.reason,
+    });
+    return { data };
+  },
+);

@@ -1,7 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
 import { salonRepository } from "@hair-simo/core";
 import { z } from "zod";
-import { requireSession } from "../../../../lib/auth";
+import { adminRoute, httpError } from "../../../../lib/admin-api";
 
 export const customerUpdateSchema = z
   .object({
@@ -15,39 +14,52 @@ export const customerUpdateSchema = z
   })
   .strict();
 
-export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    await requireSession(request, ["owner", "manager", "staff"]);
-    const { id } = await params;
-    const data = await salonRepository.findCustomerById(id);
-    if (!data) return NextResponse.json({ error: "CUSTOMER_NOT_FOUND" }, { status: 404 });
-    return NextResponse.json({ data });
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "AUTH_ERROR" },
-      { status: 403 },
-    );
-  }
-}
+export const GET = adminRoute<unknown, undefined, { id: string }>(
+  { roles: ["owner", "manager", "staff"], route: "/api/customers/[id]" },
+  async ({ params }) => {
+    const data = await salonRepository.findCustomerById(params.id);
+    if (!data) throw httpError("NOT_FOUND", { logMessage: `customer ${params.id} not found` });
+    return { data };
+  },
+);
 
-export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    await requireSession(request, ["owner", "manager", "staff"]);
-    const { id } = await params;
-    const input = customerUpdateSchema.parse(await request.json());
-    if (input.note) {
-      await salonRepository.addCustomerNote(id, input.note);
+export const PATCH = adminRoute<z.infer<typeof customerUpdateSchema>, undefined, { id: string }>(
+  {
+    roles: ["owner", "manager", "staff"],
+    route: "/api/customers/[id]",
+    schema: customerUpdateSchema,
+    audit: { entityType: "customer", action: "customer.update", entityId: (params) => params.id },
+  },
+  async ({ body, params, session, audit }) => {
+    const current = await salonRepository.findCustomerById(params.id);
+    if (!current) throw httpError("NOT_FOUND", { logMessage: `customer ${params.id} not found` });
+
+    const { note, ...customerFields } = body;
+    audit.setBefore({
+      firstName: current.firstName,
+      lastName: current.lastName,
+      email: current.email,
+      phone: current.phone,
+      locale: current.locale,
+      marketingOptIn: current.marketingOptIn,
+    });
+
+    if (note) {
+      await salonRepository.addCustomerNote(params.id, note, { authorId: session.userId });
     }
-    const { note, ...customerFields } = input;
-    void note;
     const customer = Object.keys(customerFields).length
-      ? await salonRepository.updateCustomer(id, customerFields)
-      : await salonRepository.findCustomerById(id);
-    return NextResponse.json({ data: customer });
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "UPDATE_FAILED" },
-      { status: 400 },
-    );
-  }
-}
+      ? await salonRepository.updateCustomer(params.id, customerFields)
+      : current;
+
+    audit.setAfter({
+      firstName: customer.firstName,
+      lastName: customer.lastName,
+      email: customer.email,
+      phone: customer.phone,
+      locale: customer.locale,
+      marketingOptIn: customer.marketingOptIn,
+      ...(note ? { noteAdded: true } : {}),
+    });
+    return { data: customer };
+  },
+);

@@ -1,7 +1,14 @@
-import { NextRequest, NextResponse } from "next/server";
 import { hashPassword, salonRepository } from "@hair-simo/core";
 import { z } from "zod";
-import { requireSession } from "../../../lib/auth";
+import { adminRoute, paginated, paginationShape } from "../../../lib/admin-api";
+
+const listQuerySchema = z
+  .object({
+    query: z.string().trim().max(200).optional(),
+    isBookable: z.enum(["true", "false"]).optional(),
+    ...paginationShape,
+  })
+  .strict();
 
 const createStaffSchema = z
   .object({
@@ -18,38 +25,41 @@ const createStaffSchema = z
   })
   .strict();
 
-export async function GET(request: NextRequest) {
-  try {
-    await requireSession(request, ["owner", "manager", "staff"]);
-    const search = request.nextUrl.searchParams;
+export const GET = adminRoute(
+  { roles: ["owner", "manager", "staff"], route: "/api/staff", query: listQuerySchema },
+  async ({ query }) => {
     const staff = await salonRepository.listStaff({
-      query: search.get("query")?.trim() || undefined,
-      isBookable: search.has("isBookable") ? search.get("isBookable") === "true" : undefined,
-      skip: Math.max(0, Number(search.get("offset") ?? 0)),
-      take: Math.min(100, Math.max(1, Number(search.get("limit") ?? 50))),
+      query: query.query,
+      isBookable: query.isBookable === undefined ? undefined : query.isBookable === "true",
+      skip: query.offset,
+      take: query.limit,
     });
-    return NextResponse.json({ data: staff });
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "AUTH_ERROR" },
-      { status: 403 },
-    );
-  }
-}
+    return paginated(staff, query);
+  },
+);
 
-export async function POST(request: NextRequest) {
-  try {
-    await requireSession(request, ["owner", "manager"]);
-    const input = createStaffSchema.parse(await request.json());
+export const POST = adminRoute<z.infer<typeof createStaffSchema>>(
+  {
+    roles: ["owner", "manager"],
+    route: "/api/staff",
+    schema: createStaffSchema,
+    policy: "adminSensitive",
+    successStatus: 201,
+    audit: { entityType: "staff", action: "staff.create" },
+  },
+  async ({ body, audit }) => {
     const staff = await salonRepository.createStaff({
-      ...input,
-      passwordHash: await hashPassword(input.password),
+      ...body,
+      passwordHash: await hashPassword(body.password),
     });
-    return NextResponse.json({ data: staff }, { status: 201 });
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "CREATE_FAILED" },
-      { status: 400 },
-    );
-  }
-}
+    audit.setEntityId(staff.id);
+    audit.setAfter({
+      userId: staff.id,
+      email: body.email,
+      displayName: body.displayName,
+      role: body.role,
+      isBookable: body.isBookable,
+    });
+    return { data: staff };
+  },
+);

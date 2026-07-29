@@ -2,6 +2,8 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { salonRepository } from "@hair-simo/core";
 import { requireAdminPageSession } from "../lib/auth";
+import { formatSalonTime, toDateInputValue } from "../lib/admin-datetime";
+import { getAdminLocale } from "../lib/admin-locale-server";
 import { AppointmentWorkspace } from "./AppointmentWorkspace";
 import { BusinessHoursEditor } from "./BusinessHoursEditor";
 import { CalendarWorkspace } from "./CalendarWorkspace";
@@ -15,6 +17,7 @@ import { StaffWorkspace } from "./StaffWorkspace";
 
 export async function AdminSectionPage({ section }: { section: string }) {
   await requireAdminPageSession();
+  const locale = await getAdminLocale();
 
   if (section === "dashboard") {
     const [stats, appointments, products] = await Promise.all([
@@ -22,8 +25,8 @@ export async function AdminSectionPage({ section }: { section: string }) {
       salonRepository.listAppointments(),
       salonRepository.listProducts(),
     ]);
-    const today = new Date();
-    const todaysAppointments = appointments.filter((appointment) => new Date(appointment.startsAt).toDateString() === today.toDateString());
+    const todayKey = toDateInputValue(new Date());
+    const todaysAppointments = appointments.filter((appointment) => toDateInputValue(appointment.startsAt) === todayKey);
     const activeToday = todaysAppointments.filter((appointment) => !["cancelled", "no_show"].includes(appointment.status));
     const occupancy = Math.min(100, Math.round((activeToday.length / 10) * 100));
     const lowStock = products.filter((product) => product.stock <= 5);
@@ -49,7 +52,7 @@ export async function AdminSectionPage({ section }: { section: string }) {
               <tbody>
                 {todaysAppointments.map((appointment) => (
                   <tr key={appointment.id}>
-                    <td>{new Date(appointment.startsAt).toLocaleTimeString("de-IT", { hour: "2-digit", minute: "2-digit" })}</td>
+                    <td>{formatSalonTime(appointment.startsAt, locale)}</td>
                     <td>{appointment.customer.firstName} {appointment.customer.lastName}</td>
                     <td>{appointment.service.slug.replaceAll("-", " ")}</td>
                     <td>{appointment.staff?.displayName ?? "Open"}</td>
@@ -87,7 +90,7 @@ export async function AdminSectionPage({ section }: { section: string }) {
       salonRepository.listAppointments(),
       salonRepository.listStaff(),
     ]);
-    return <CalendarWorkspace appointments={appointments} staff={staff} />;
+    return <CalendarWorkspace appointments={appointments} staff={staff} locale={locale} />;
   }
 
   if (section === "appointments") {
@@ -96,12 +99,12 @@ export async function AdminSectionPage({ section }: { section: string }) {
       salonRepository.listServices(true),
       salonRepository.listStaff(),
     ]);
-    return <AppointmentWorkspace appointments={appointments} services={services} staff={staff} />;
+    return <AppointmentWorkspace appointments={appointments} services={services} staff={staff} locale={locale} />;
   }
 
   if (section === "customers") {
     const customers = await salonRepository.listCustomers();
-    return <CustomerEditor customers={customers} />;
+    return <CustomerEditor customers={customers} locale={locale} />;
   }
 
   if (section === "services") {
@@ -114,17 +117,17 @@ export async function AdminSectionPage({ section }: { section: string }) {
       salonRepository.listStaff(),
       salonRepository.listServices(true),
     ]);
-    return <StaffWorkspace staff={staff} services={services} />;
+    return <StaffWorkspace staff={staff} services={services} locale={locale} />;
   }
 
   if (section === "rules") {
     const hours = await salonRepository.listBusinessHours();
-    return <BusinessHoursEditor hours={hours} />;
+    return <BusinessHoursEditor hours={hours} locale={locale} />;
   }
 
   if (section === "products") {
     const products = await salonRepository.listProducts();
-    return <ProductWorkspace products={products} />;
+    return <ProductWorkspace products={products} locale={locale} />;
   }
 
   if (section === "reports") {
@@ -134,12 +137,12 @@ export async function AdminSectionPage({ section }: { section: string }) {
 
   if (section === "call-logs") {
     const callLogs = await salonRepository.listCallLogs();
-    return <CallLogWorkspace calls={callLogs} />;
+    return <CallLogWorkspace calls={callLogs} locale={locale} />;
   }
 
   if (section === "notifications") {
     const notifications = await salonRepository.listNotifications();
-    return <NotificationWorkspace notifications={notifications} />;
+    return <NotificationWorkspace notifications={notifications} locale={locale} />;
   }
 
   redirect("/dashboard");

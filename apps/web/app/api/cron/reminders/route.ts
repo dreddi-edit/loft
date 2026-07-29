@@ -1,29 +1,24 @@
-import { NextRequest, NextResponse } from "next/server";
 import { ReminderService } from "@hair-simo/core";
+import { z } from "zod";
+import { apiRoute } from "../../../../lib/api-handler";
 
 const reminderService = new ReminderService();
 
-function isAuthorized(request: NextRequest) {
-  const secret = process.env.GCP_CLOUD_TASKS_SECRET ?? process.env.CRON_SECRET;
-  if (!secret) return process.env.NODE_ENV !== "production";
-  const auth = request.headers.get("authorization");
-  return auth === `Bearer ${secret}`;
-}
+const CRON_BODY_LIMIT_BYTES = 1_024;
+const MAX_WITHIN_HOURS = 24 * 7;
 
-export async function POST(request: NextRequest) {
-  if (!isAuthorized(request)) {
-    return NextResponse.json({ error: "UNAUTHORIZED" }, { status: 401 });
-  }
+const reminderBatchSchema = z.object({
+  withinHours: z.coerce.number().int().min(1).max(MAX_WITHIN_HOURS).default(24),
+});
 
-  try {
-    const body = await request.json().catch(() => ({}));
-    const withinHours = Number(body.withinHours ?? 24);
-    const result = await reminderService.dispatchDueReminders(withinHours);
-    return NextResponse.json({ data: result });
-  } catch (error) {
-    return NextResponse.json(
-      { error: "REMINDER_BATCH_FAILED", message: error instanceof Error ? error.message : "unknown error" },
-      { status: 500 },
-    );
-  }
-}
+export const POST = apiRoute<z.infer<typeof reminderBatchSchema>>(
+  {
+    route: "/api/cron/reminders",
+    methods: ["POST"],
+    policy: "internal",
+    sharedSecret: "cron",
+    bodyLimitBytes: CRON_BODY_LIMIT_BYTES,
+    schema: reminderBatchSchema,
+  },
+  async ({ body }) => ({ data: await reminderService.dispatchDueReminders(body.withinHours) }),
+);

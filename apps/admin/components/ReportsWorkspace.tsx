@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { salonMonthStartInputValue, toDateInputValue } from "../lib/admin-datetime";
 
 type ReportData = {
   revenueCents: number;
@@ -17,9 +18,8 @@ type ReportData = {
 export function ReportsWorkspace({ initial }: { initial: ReportData }) {
   const [data, setData] = useState(initial);
   const now = new Date();
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
-  const [from, setFrom] = useState(monthStart);
-  const [to, setTo] = useState(now.toISOString().slice(0, 10));
+  const [from, setFrom] = useState(salonMonthStartInputValue(now));
+  const [to, setTo] = useState(toDateInputValue(now));
   const [busy, setBusy] = useState(false);
 
   async function load() {

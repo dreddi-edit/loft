@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
+import { apiRoute } from "../../../../lib/api-handler";
 import { getPublicRuntimeConfig } from "../../../../lib/public-config";
 
-export async function GET() {
-  return NextResponse.json({ data: getPublicRuntimeConfig() });
-}
+export const GET = apiRoute(
+  { route: "/api/config/public", methods: ["GET"], policy: "publicRead" },
+  () => ({ data: getPublicRuntimeConfig() }),
+);

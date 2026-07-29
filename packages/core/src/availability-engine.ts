@@ -1,4 +1,5 @@
 import { addMinutes, areIntervalsOverlapping } from "date-fns";
+import { SALON_TIME_ZONE, zonedMinutesToUtc } from "./time";
 
 export type Slot = { startsAt: Date; endsAt: Date };
 
@@ -12,11 +13,32 @@ export type BlockedInterval = {
   endsAt: Date;
 };
 
-export function minutesToDate(day: Date, minutes: number): Date {
-  const result = new Date(day);
-  result.setHours(0, 0, 0, 0);
-  result.setMinutes(minutes);
-  return result;
+/**
+ * Granularity of the offered start times. The salon writes its paper book in quarter
+ * hours, so every published slot starts on a :00/:15/:30/:45 of the salon wall clock.
+ */
+export const SLOT_INTERVAL_MIN = 15;
+
+/**
+ * Turn a pair of minutes-from-midnight (`BusinessHours`, `StaffAvailabilityRule`) into
+ * absolute instants.
+ *
+ * Both bounds are resolved against the salon wall clock of the day containing `day`,
+ * never against the host clock, so the window is identical on a developer machine in
+ * Europe/Rome and on a Cloud Run container in UTC. Because each bound is converted
+ * independently, a 23 hour (spring forward) or 25 hour (fall back) salon day yields a
+ * window of the correct absolute length rather than a nominal one.
+ */
+export function buildSalonWindow(
+  day: Date,
+  startMin: number,
+  endMin: number,
+  timeZone: string = SALON_TIME_ZONE,
+): AvailabilityWindow {
+  return {
+    dayStart: zonedMinutesToUtc(day, startMin, timeZone),
+    dayEnd: zonedMinutesToUtc(day, endMin, timeZone),
+  };
 }
 
 export function intersectWindows(
@@ -33,9 +55,17 @@ export function buildSlotsForWindow(input: {
   window: AvailabilityWindow;
   serviceDurationMin: number;
   bufferAfterMin: number;
-  intervalMin: number;
+  intervalMin?: number;
   blocked: BlockedInterval[];
 }): Slot[] {
+  const intervalMin = input.intervalMin ?? SLOT_INTERVAL_MIN;
+  if (!Number.isInteger(intervalMin) || intervalMin <= 0) {
+    throw new Error(
+      `intervalMin must be a positive integer number of minutes, received ${String(
+        input.intervalMin,
+      )}.`,
+    );
+  }
   const slots: Slot[] = [];
   const durationWithBuffer = input.serviceDurationMin + input.bufferAfterMin;
   let cursor = new Date(input.window.dayStart);
@@ -51,11 +81,16 @@ export function buildSlotsForWindow(input: {
       ),
     );
     if (!overlaps) slots.push({ startsAt: new Date(cursor), endsAt });
-    cursor = addMinutes(cursor, input.intervalMin);
+    cursor = addMinutes(cursor, intervalMin);
   }
   return slots;
 }
 
+/**
+ * Dedupe by absolute instant, not by wall clock. On the spring forward day two distinct
+ * local start times collapse onto the same instant, and two staff rules that differ only
+ * inside the skipped hour would otherwise offer the customer the same moment twice.
+ */
 export function mergeUniqueSlots(slots: Slot[]): Slot[] {
   const seen = new Set<string>();
   return slots
@@ -66,22 +101,4 @@ export function mergeUniqueSlots(slots: Slot[]): Slot[] {
       return true;
     })
     .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
-}
-
-export function slotOverlapsBlocked(
-  slot: Slot,
-  blocked: BlockedInterval[],
-  bufferAfterMin: number,
-): boolean {
-  const blockedEnd = addMinutes(
-    slot.startsAt,
-    slot.endsAt.getTime() - slot.startsAt.getTime() + bufferAfterMin,
-  );
-  return blocked.some((entry) =>
-    areIntervalsOverlapping(
-      { start: slot.startsAt, end: blockedEnd },
-      { start: entry.startsAt, end: entry.endsAt },
-      { inclusive: true },
-    ),
-  );
 }

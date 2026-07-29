@@ -1,9 +1,8 @@
-import { NextRequest, NextResponse } from "next/server";
 import { salonRepository } from "@hair-simo/core";
 import { z } from "zod";
-import { requireSession } from "../../../../lib/auth";
+import { adminRoute, httpError } from "../../../../lib/admin-api";
 
-const schema = z
+const updateProductSchema = z
   .object({
     sku: z.string().trim().min(1).max(100).optional(),
     name: z.string().trim().min(1).max(200).optional(),
@@ -11,47 +10,54 @@ const schema = z
   })
   .strict();
 
-export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    await requireSession(request, ["owner", "manager", "staff"]);
-    const { id } = await params;
-    const data = await salonRepository.findProductById(id);
-    if (!data) return NextResponse.json({ error: "PRODUCT_NOT_FOUND" }, { status: 404 });
-    return NextResponse.json({ data });
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "AUTH_ERROR" },
-      { status: 403 },
-    );
-  }
+function snapshot(product: { sku: string; name: string; priceCents: number; stock: number }) {
+  return {
+    sku: product.sku,
+    name: product.name,
+    priceCents: product.priceCents,
+    stock: product.stock,
+  };
 }
 
-export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    await requireSession(request, ["owner", "manager"]);
-    const { id } = await params;
-    const input = schema.parse(await request.json());
-    return NextResponse.json({ data: await salonRepository.updateProduct(id, input) });
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "UPDATE_FAILED" },
-      { status: 400 },
-    );
-  }
-}
+export const GET = adminRoute<unknown, undefined, { id: string }>(
+  { roles: ["owner", "manager", "staff"], route: "/api/products/[id]" },
+  async ({ params }) => {
+    const data = await salonRepository.findProductById(params.id);
+    if (!data) throw httpError("NOT_FOUND", { logMessage: `product ${params.id} not found` });
+    return { data };
+  },
+);
 
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> },
-) {
-  try {
-    await requireSession(request, ["owner", "manager"]);
-    const { id } = await params;
-    return NextResponse.json({ data: await salonRepository.deleteProduct(id) });
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "DELETE_FAILED" },
-      { status: 400 },
-    );
-  }
-}
+export const PATCH = adminRoute<z.infer<typeof updateProductSchema>, undefined, { id: string }>(
+  {
+    roles: ["owner", "manager"],
+    route: "/api/products/[id]",
+    schema: updateProductSchema,
+    audit: { entityType: "product", action: "product.update", entityId: (params) => params.id },
+  },
+  async ({ body, params, audit }) => {
+    const current = await salonRepository.findProductById(params.id);
+    if (!current) throw httpError("NOT_FOUND", { logMessage: `product ${params.id} not found` });
+    audit.setBefore(snapshot(current));
+    const data = await salonRepository.updateProduct(params.id, body);
+    audit.setAfter(snapshot(data));
+    return { data };
+  },
+);
+
+export const DELETE = adminRoute<unknown, undefined, { id: string }>(
+  {
+    roles: ["owner", "manager"],
+    route: "/api/products/[id]",
+    policy: "adminSensitive",
+    audit: { entityType: "product", action: "product.delete", entityId: (params) => params.id },
+  },
+  async ({ params, audit }) => {
+    const current = await salonRepository.findProductById(params.id);
+    if (!current) throw httpError("NOT_FOUND", { logMessage: `product ${params.id} not found` });
+    audit.setBefore(snapshot(current));
+    const data = await salonRepository.deleteProduct(params.id);
+    audit.setAfter({ deleted: true });
+    return { data };
+  },
+);

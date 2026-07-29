@@ -80,6 +80,10 @@ resource "google_cloud_tasks_queue" "tasks" {
   }
 }
 
+# Terraform creates the container but never the version: the connection string embeds
+# var.db_password, and writing it here would park the production password in the state
+# file a second time. Add the version by hand after the instance exists, using the
+# database_url_hint output as the template. See README.md "Database".
 resource "google_secret_manager_secret" "database_url" {
   secret_id = "hair-simo-database-url"
   labels    = local.labels
@@ -141,57 +145,80 @@ resource "google_secret_manager_secret_version" "cloud_tasks_secret" {
   secret_data = var.cron_secret
 }
 
-resource "google_alloydb_cluster" "primary" {
-  count           = var.enable_alloydb ? 1 : 0
-  cluster_id      = var.alloydb_cluster_id
-  location        = var.region
-  labels          = local.labels
-  deletion_policy = "DEFAULT"
+# Cloud SQL for PostgreSQL, not AlloyDB. AlloyDB has no small tier: its smallest
+# primary is 2 vCPU / 16 GB at roughly EUR 240/month, which is absurd for a salon
+# booking around 260 appointments a month. Every protection the AlloyDB config had
+# is carried over below.
+resource "google_sql_database_instance" "primary" {
+  count               = var.enable_database ? 1 : 0
+  name                = var.db_instance_name
+  region              = var.region
+  database_version    = "POSTGRES_16"
+  deletion_protection = true
 
-  network_config {
-    network = google_compute_network.vpc.id
-  }
+  settings {
+    tier                        = var.db_tier
+    edition                     = "ENTERPRISE"
+    availability_type           = var.db_availability_type
+    disk_type                   = "PD_SSD"
+    disk_size                   = var.db_disk_size_gb
+    disk_autoresize             = true
+    disk_autoresize_limit       = var.db_disk_autoresize_limit_gb
+    deletion_protection_enabled = true
+    user_labels                 = local.labels
 
-  initial_user {
-    user     = "postgres"
-    password = var.alloydb_password
-  }
+    backup_configuration {
+      enabled = true
 
-  automated_backup_policy {
-    enabled       = true
-    location      = var.region
-    backup_window = "3600s"
-    labels        = local.labels
-
-    weekly_schedule {
-      days_of_week = [
-        "MONDAY",
-        "TUESDAY",
-        "WEDNESDAY",
-        "THURSDAY",
-        "FRIDAY",
-        "SATURDAY",
-        "SUNDAY",
-      ]
-
-      # AlloyDB schedules in UTC: 01:00 UTC is 03:00 in Europe/Rome during CEST
+      # Cloud SQL schedules in UTC: 01:00 UTC is 03:00 in Europe/Rome during CEST
       # and 02:00 during CET. Both fall inside the salon's closed window.
-      start_times {
-        hours   = 1
-        minutes = 0
-        seconds = 0
-        nanos   = 0
+      start_time                     = "01:00"
+      location                       = "eu"
+      point_in_time_recovery_enabled = true
+
+      # WAL retention for point-in-time recovery. 7 is the maximum on the ENTERPRISE
+      # edition; only ENTERPRISE_PLUS allows up to 35, and that edition has no
+      # shared-core tier, so raising this means leaving the cheap tiers behind.
+      transaction_log_retention_days = 7
+
+      backup_retention_settings {
+        retained_backups = 35
+        retention_unit   = "COUNT"
       }
     }
 
-    time_based_retention {
-      retention_period = "${35 * 24 * 60 * 60}s"
+    ip_configuration {
+      ipv4_enabled                                  = false
+      private_network                               = google_compute_network.vpc.id
+      ssl_mode                                      = "ENCRYPTED_ONLY"
+      enable_private_path_for_google_cloud_services = false
     }
-  }
 
-  continuous_backup_config {
-    enabled              = true
-    recovery_window_days = 14
+    # day 1 is Monday and hour is UTC. The salon is open Tue-Sat 08:00-17:00 and
+    # closed Sun+Mon, so a Monday 02:00 UTC (03:00/04:00 local) window cannot touch
+    # a trading day even if a restart runs long.
+    maintenance_window {
+      day          = 1
+      hour         = 2
+      update_track = "stable"
+    }
+
+    insights_config {
+      query_insights_enabled  = true
+      query_string_length     = 1024
+      record_application_tags = false
+      record_client_address   = false
+    }
+
+    database_flags {
+      name  = "max_connections"
+      value = tostring(var.db_max_connections)
+    }
+
+    database_flags {
+      name  = "log_min_duration_statement"
+      value = "1000"
+    }
   }
 
   depends_on = [google_service_networking_connection.private_vpc_connection]
@@ -201,22 +228,26 @@ resource "google_alloydb_cluster" "primary" {
   }
 }
 
-resource "google_alloydb_instance" "primary" {
-  count         = var.enable_alloydb ? 1 : 0
-  cluster       = google_alloydb_cluster.primary[0].name
-  instance_id   = "${var.alloydb_cluster_id}-primary"
-  instance_type = "PRIMARY"
-  labels        = local.labels
-
-  machine_config {
-    cpu_count = 2
-  }
-
-  depends_on = [google_service_networking_connection.private_vpc_connection]
+resource "google_sql_database" "app" {
+  count    = var.enable_database ? 1 : 0
+  name     = var.db_name
+  instance = google_sql_database_instance.primary[0].name
 
   lifecycle {
     prevent_destroy = true
   }
+}
+
+resource "google_sql_user" "app" {
+  count    = var.enable_database ? 1 : 0
+  name     = var.db_user
+  instance = google_sql_database_instance.primary[0].name
+  password = var.db_password
+  type     = "BUILT_IN"
+
+  # A PostgreSQL role that owns tables cannot be dropped, so let Terraform forget the
+  # user instead of failing the destroy half way through.
+  deletion_policy = "ABANDON"
 }
 
 resource "google_compute_network" "vpc" {
@@ -245,15 +276,10 @@ resource "google_service_networking_connection" "private_vpc_connection" {
   reserved_peering_ranges = [google_compute_global_address.private_service_range.name]
 }
 
-resource "google_vpc_access_connector" "connector" {
-  name          = "hs-stg-conn"
-  region        = var.region
-  network       = google_compute_network.vpc.name
-  ip_cidr_range = "10.8.0.0/28"
-  min_instances = 2
-  max_instances = 10
-}
-
+# There is deliberately no google_vpc_access_connector. A Serverless VPC Access
+# connector bills two always-on e2-micro instances (roughly EUR 15-25/month) purely to
+# forward traffic to the private database. Cloud Run v2 does the same thing natively
+# with Direct VPC egress (the network_interfaces block below) at no extra charge.
 resource "google_cloud_run_v2_service" "web" {
   name     = "hair-simo-web"
   location = var.region
@@ -264,8 +290,12 @@ resource "google_cloud_run_v2_service" "web" {
     service_account = google_service_account.run.email
 
     vpc_access {
-      connector = google_vpc_access_connector.connector.id
-      egress    = "PRIVATE_RANGES_ONLY"
+      egress = "PRIVATE_RANGES_ONLY"
+
+      network_interfaces {
+        network    = google_compute_network.vpc.name
+        subnetwork = google_compute_subnetwork.subnet.name
+      }
     }
 
     containers {
@@ -291,9 +321,11 @@ resource "google_cloud_run_v2_service" "web" {
         value = var.region
       }
 
+      # Not var.region: Gemini is only served from a subset of regions and the salon's
+      # own region is not one of the guaranteed ones. See README.md "Region".
       env {
         name  = "GCP_VERTEX_LOCATION"
-        value = "europe-west1"
+        value = var.vertex_location
       }
 
       env {
@@ -400,15 +432,21 @@ resource "google_cloud_run_v2_service" "web" {
 
       resources {
         limits = {
-          cpu    = "2"
-          memory = "1Gi"
+          cpu    = var.web_cpu
+          memory = var.web_memory
         }
+
+        # Bill CPU only while a request is in flight, and hand the container extra CPU
+        # during startup so the cold start that min_instance_count = 0 buys us stays
+        # in the two to three second range.
+        cpu_idle          = true
+        startup_cpu_boost = true
       }
     }
 
     scaling {
-      min_instance_count = 1
-      max_instance_count = 10
+      min_instance_count = var.web_min_instances
+      max_instance_count = var.web_max_instances
     }
   }
 
@@ -430,8 +468,12 @@ resource "google_cloud_run_v2_service" "admin" {
     service_account = google_service_account.run.email
 
     vpc_access {
-      connector = google_vpc_access_connector.connector.id
-      egress    = "PRIVATE_RANGES_ONLY"
+      egress = "PRIVATE_RANGES_ONLY"
+
+      network_interfaces {
+        network    = google_compute_network.vpc.name
+        subnetwork = google_compute_subnetwork.subnet.name
+      }
     }
 
     containers {
@@ -450,6 +492,14 @@ resource "google_cloud_run_v2_service" "admin" {
       env {
         name  = "GCP_PROJECT_ID"
         value = var.project_id
+      }
+
+      # GCP_PROJECT_ID is set above, so getGcpConfig() in packages/gcp resolves here too,
+      # and its region default is still the old europe-west6. Set it explicitly rather
+      # than letting the admin app address a region that holds none of our resources.
+      env {
+        name  = "GCP_REGION"
+        value = var.region
       }
 
       env {
@@ -504,15 +554,18 @@ resource "google_cloud_run_v2_service" "admin" {
 
       resources {
         limits = {
-          cpu    = "1"
-          memory = "512Mi"
+          cpu    = var.admin_cpu
+          memory = var.admin_memory
         }
+
+        cpu_idle          = true
+        startup_cpu_boost = true
       }
     }
 
     scaling {
-      min_instance_count = 1
-      max_instance_count = 5
+      min_instance_count = var.admin_min_instances
+      max_instance_count = var.admin_max_instances
     }
   }
 
@@ -616,15 +669,38 @@ resource "google_compute_managed_ssl_certificate" "web" {
   }
 }
 
+# Three backend services share one serverless NEG because Cloud CDN caching policy is
+# a property of the backend service, not of a path. Routing in google_compute_url_map.web
+# sends the two static prefixes to the aggressive backends and everything else here.
 resource "google_compute_backend_service" "web" {
-  count           = var.enable_load_balancer ? 1 : 0
-  name            = "hair-simo-web-backend"
-  protocol        = "HTTP"
-  timeout_sec     = 30
-  security_policy = google_compute_security_policy.armor.id
+  count            = var.enable_load_balancer ? 1 : 0
+  name             = "hair-simo-web-backend"
+  protocol         = "HTTP"
+  timeout_sec      = 30
+  security_policy  = google_compute_security_policy.armor.id
+  enable_cdn       = var.enable_cdn
+  compression_mode = "AUTOMATIC"
 
   backend {
     group = google_compute_region_network_endpoint_group.web[0].id
+  }
+
+  # HTML is localized (de/it/fr/en) and half of it is authenticated, so the origin
+  # decides: USE_ORIGIN_HEADERS caches only what Next.js explicitly marks cacheable and
+  # never caches a response carrying Set-Cookie.
+  dynamic "cdn_policy" {
+    for_each = var.enable_cdn ? [1] : []
+    content {
+      cache_mode        = "USE_ORIGIN_HEADERS"
+      negative_caching  = true
+      serve_while_stale = 86400
+
+      cache_key_policy {
+        include_host         = true
+        include_protocol     = true
+        include_query_string = true
+      }
+    }
   }
 
   log_config {
@@ -633,12 +709,95 @@ resource "google_compute_backend_service" "web" {
   }
 }
 
+# /_next/static/* only ever holds content-hashed build output, so a new deploy produces
+# new URLs and the old ones can be cached for a year without an invalidation step.
+resource "google_compute_backend_service" "web_static" {
+  count            = var.enable_load_balancer ? 1 : 0
+  name             = "hair-simo-web-static-backend"
+  protocol         = "HTTP"
+  timeout_sec      = 30
+  security_policy  = google_compute_security_policy.armor.id
+  enable_cdn       = var.enable_cdn
+  compression_mode = "AUTOMATIC"
+
+  backend {
+    group = google_compute_region_network_endpoint_group.web[0].id
+  }
+
+  dynamic "cdn_policy" {
+    for_each = var.enable_cdn ? [1] : []
+    content {
+      cache_mode        = "CACHE_ALL_STATIC"
+      client_ttl        = local.cdn_immutable_ttl
+      default_ttl       = local.cdn_immutable_ttl
+      max_ttl           = local.cdn_immutable_ttl
+      negative_caching  = true
+      serve_while_stale = 86400
+
+      cache_key_policy {
+        include_host         = true
+        include_protocol     = true
+        include_query_string = false
+      }
+    }
+  }
+
+  log_config {
+    enable      = true
+    sample_rate = 1.0
+  }
+}
+
+# /images, /videos, /products and /brand are hand-managed files under apps/web/public
+# with stable names: 4.7 MB in total, 2.5 MB of it hero-video.mp4. Serving those from
+# Cloud Run means paying container CPU and Cloud Run egress on every single view. They
+# are cached for a day at the client and a week at the edge; a replaced file needs a
+# cache invalidation (see README.md "CDN").
+resource "google_compute_backend_service" "web_media" {
+  count            = var.enable_load_balancer ? 1 : 0
+  name             = "hair-simo-web-media-backend"
+  protocol         = "HTTP"
+  timeout_sec      = 30
+  security_policy  = google_compute_security_policy.armor.id
+  enable_cdn       = var.enable_cdn
+  compression_mode = "AUTOMATIC"
+
+  backend {
+    group = google_compute_region_network_endpoint_group.web[0].id
+  }
+
+  dynamic "cdn_policy" {
+    for_each = var.enable_cdn ? [1] : []
+    content {
+      cache_mode        = "CACHE_ALL_STATIC"
+      client_ttl        = 86400
+      default_ttl       = 86400
+      max_ttl           = 604800
+      negative_caching  = true
+      serve_while_stale = 86400
+
+      cache_key_policy {
+        include_host         = true
+        include_protocol     = true
+        include_query_string = false
+      }
+    }
+  }
+
+  log_config {
+    enable      = true
+    sample_rate = 1.0
+  }
+}
+
+# No CDN here on purpose: every backoffice response is authenticated and per-user.
 resource "google_compute_backend_service" "admin" {
   count           = var.enable_load_balancer ? 1 : 0
   name            = "hair-simo-admin-backend"
   protocol        = "HTTP"
   timeout_sec     = 30
   security_policy = google_compute_security_policy.admin_armor.id
+  enable_cdn      = false
 
   backend {
     group = google_compute_region_network_endpoint_group.admin[0].id
@@ -678,8 +837,28 @@ resource "google_compute_url_map" "web" {
   default_service = google_compute_backend_service.web[0].id
 
   host_rule {
+    hosts        = [var.web_domain]
+    path_matcher = "web"
+  }
+
+  host_rule {
     hosts        = [var.admin_domain]
     path_matcher = "admin"
+  }
+
+  path_matcher {
+    name            = "web"
+    default_service = google_compute_backend_service.web[0].id
+
+    path_rule {
+      paths   = local.cdn_immutable_paths
+      service = google_compute_backend_service.web_static[0].id
+    }
+
+    path_rule {
+      paths   = local.cdn_media_paths
+      service = google_compute_backend_service.web_media[0].id
+    }
   }
 
   path_matcher {
@@ -1054,7 +1233,7 @@ resource "google_monitoring_alert_policy" "cloud_run_latency" {
   documentation {
     subject   = "Hair Simo is slow"
     mime_type = "text/markdown"
-    content   = "p95 request latency stayed above ${var.alert_latency_p95_ms} ms for ten minutes. Check AlloyDB load, cold starts and the VPC connector."
+    content   = "p95 request latency stayed above ${var.alert_latency_p95_ms} ms for ten minutes. Check Cloud SQL load and cold starts: with web_min_instances = 0 a quiet night is followed by a cold start on the first request, which shows up here as a latency spike rather than an outage."
   }
 
   alert_strategy {
@@ -1064,9 +1243,9 @@ resource "google_monitoring_alert_policy" "cloud_run_latency" {
   notification_channels = [google_monitoring_notification_channel.email[0].id]
 }
 
-resource "google_monitoring_alert_policy" "alloydb_cpu" {
-  count        = var.enable_monitoring && var.enable_alloydb ? 1 : 0
-  display_name = "Hair Simo AlloyDB CPU high"
+resource "google_monitoring_alert_policy" "database_cpu" {
+  count        = var.enable_monitoring && var.enable_database ? 1 : 0
+  display_name = "Hair Simo Cloud SQL CPU high"
   combiner     = "OR"
   user_labels  = local.labels
 
@@ -1074,16 +1253,16 @@ resource "google_monitoring_alert_policy" "alloydb_cpu" {
     display_name = "Instance CPU utilization"
 
     condition_threshold {
-      filter          = "resource.type = \"alloydb.googleapis.com/Instance\" AND metric.type = \"alloydb.googleapis.com/instance/cpu/average_utilization\""
+      filter          = "resource.type = \"cloudsql_database\" AND resource.label.database_id = \"${var.project_id}:${var.db_instance_name}\" AND metric.type = \"cloudsql.googleapis.com/database/cpu/utilization\""
       comparison      = "COMPARISON_GT"
-      threshold_value = var.alert_alloydb_cpu_threshold
+      threshold_value = var.alert_db_cpu_threshold
       duration        = "600s"
 
       aggregations {
         alignment_period     = "300s"
         per_series_aligner   = "ALIGN_MEAN"
         cross_series_reducer = "REDUCE_MEAN"
-        group_by_fields      = ["resource.label.instance_id"]
+        group_by_fields      = ["resource.label.database_id"]
       }
     }
   }
@@ -1091,7 +1270,7 @@ resource "google_monitoring_alert_policy" "alloydb_cpu" {
   documentation {
     subject   = "Hair Simo database CPU is saturated"
     mime_type = "text/markdown"
-    content   = "AlloyDB CPU stayed above ${var.alert_alloydb_cpu_threshold * 100}% for ten minutes. Check slow queries before scaling machine_config.cpu_count."
+    content   = "Cloud SQL CPU stayed above ${var.alert_db_cpu_threshold * 100}% for ten minutes. Read Query Insights first: on a shared-core tier a single missing index looks exactly like an undersized instance. Raise var.db_tier only if the queries are already sane."
   }
 
   alert_strategy {

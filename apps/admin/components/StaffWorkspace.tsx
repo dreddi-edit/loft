@@ -2,6 +2,8 @@
 
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
+import type { AppLocale } from "@hair-simo/i18n";
+import { dateTimeLocalToIso, formatSalonDate, salonWeekdayNames } from "../lib/admin-datetime";
 
 type Service = { id: string; slug: string; translations?: Array<{ locale: string; name: string }> };
 type Staff = {
@@ -17,8 +19,6 @@ type Staff = {
   timeOffs?: Array<{ id: string; startsAt: string | Date; endsAt: string | Date; reason: string | null }>;
 };
 
-const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
 function minutesToTime(minutes: number) {
   return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 }
@@ -28,7 +28,15 @@ function timeToMinutes(value: string) {
   return hours * 60 + minutes;
 }
 
-export function StaffWorkspace({ staff, services }: { staff: Staff[]; services: Service[] }) {
+export function StaffWorkspace({
+  staff,
+  services,
+  locale,
+}: {
+  staff: Staff[];
+  services: Service[];
+  locale: AppLocale;
+}) {
   const router = useRouter();
   const [items, setItems] = useState(staff);
   const [selectedId, setSelectedId] = useState(staff[0]?.id ?? "");
@@ -37,6 +45,7 @@ export function StaffWorkspace({ staff, services }: { staff: Staff[]; services: 
   const [form, setForm] = useState({ firstName: "", lastName: "", displayName: "", email: "", phone: "", bio: "", password: "" });
   const [timeOff, setTimeOff] = useState({ startsAt: "", endsAt: "", reason: "" });
   const selected = items.find((member) => member.id === selectedId);
+  const dayNames = salonWeekdayNames(locale, "short");
 
   function update(patch: Partial<Staff>) {
     setItems((current) => current.map((member) => member.id === selectedId ? { ...member, ...patch } : member));
@@ -107,8 +116,8 @@ export function StaffWorkspace({ staff, services }: { staff: Staff[]; services: 
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         ...timeOff,
-        startsAt: new Date(timeOff.startsAt).toISOString(),
-        endsAt: new Date(timeOff.endsAt).toISOString(),
+        startsAt: dateTimeLocalToIso(timeOff.startsAt),
+        endsAt: dateTimeLocalToIso(timeOff.endsAt),
       }),
     });
     const json = await response.json();
@@ -216,7 +225,7 @@ export function StaffWorkspace({ staff, services }: { staff: Staff[]; services: 
               <h3>Time off</h3>
               {selected.timeOffs?.map((entry) => (
                 <div className="admin-history-row" key={entry.id}>
-                  <span>{new Date(entry.startsAt).toLocaleDateString("en")} — {new Date(entry.endsAt).toLocaleDateString("en")}</span>
+                  <span>{formatSalonDate(entry.startsAt, locale)} — {formatSalonDate(entry.endsAt, locale)}</span>
                   <small>{entry.reason ?? "Time off"}</small>
                 </div>
               ))}

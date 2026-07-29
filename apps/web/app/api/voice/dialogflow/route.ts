@@ -1,59 +1,120 @@
-import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@hair-simo/db";
 import { runAssistant } from "@hair-simo/ai";
-import { aiTools } from "../../../../lib/ai-tools";
+import { prisma } from "@hair-simo/db";
+import { NextResponse } from "next/server";
+import { createAiTools } from "../../../../lib/ai-tools";
+import { apiRoute } from "../../../../lib/api-handler";
+import {
+  DIALOGFLOW_WEBHOOK_SECRET,
+  requireRouteSecret,
+  verifyRouteSecret,
+} from "../../_lib/route-secret";
 
-export async function POST(request: NextRequest) {
-  try {
+/**
+ * Dialogflow CX configuration (Agent > Manage > Webhooks > this webhook):
+ *   Webhook URL          https://<service-host>/api/voice/dialogflow
+ *   Subtype              Standard
+ *   Authentication       "Custom headers" (Service agent auth / OIDC stays off)
+ *   Header key           x-dialogflow-webhook-secret
+ *   Header value         the value of GCP_DIALOGFLOW_WEBHOOK_SECRET
+ * Set GCP_DIALOGFLOW_WEBHOOK_SECRET in Secret Manager and expose it to the Cloud Run
+ * service; without it the route refuses to start in production. Rotate by adding the new
+ * value in Dialogflow first, then flipping the environment variable.
+ */
+requireRouteSecret(DIALOGFLOW_WEBHOOK_SECRET);
+
+const DIALOGFLOW_BODY_LIMIT_BYTES = 16_384;
+const MAX_UTTERANCE_CHARS = 500;
+const MAX_TTS_CHARS = 600;
+const MAX_CALL_LOG_SUMMARY = 500;
+const MAX_PARAMETER_CHARS = 100;
+const UNCERTAIN_CONFIDENCE = 0.5;
+
+const UNCERTAIN_MESSAGE =
+  "Sorry, I could not confidently process your request. We will call you back shortly.";
+const FAILURE_MESSAGE = "An error occurred. Please try again or call us directly.";
+
+function parameterString(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  const text = String(value).trim();
+  return text === "" ? undefined : text.slice(0, MAX_PARAMETER_CHARS);
+}
+
+export const POST = apiRoute(
+  {
+    route: "/api/voice/dialogflow",
+    methods: ["POST"],
+    // The caller is Google's infrastructure, so a per-address limit sized for a human
+    // would throttle a single ten turn phone call. This is a blast radius cap on an
+    // authenticated machine caller; the per-request work is bounded separately below.
+    policy: "internal",
+    bodyLimitBytes: DIALOGFLOW_BODY_LIMIT_BYTES,
+  },
+  async ({ req, body, log }) => {
+    // Verified before anything else and outside the fallback below, so an unauthenticated
+    // caller gets 401 instead of a friendly spoken error with a CallLog row behind it.
+    verifyRouteSecret(DIALOGFLOW_WEBHOOK_SECRET, req.headers);
+
     const { parseDialogflowWebhook, buildDialogflowPlayAudioResponse, buildDialogflowResponse } =
       await import("@hair-simo/gcp/dialogflow");
-    const { synthesizeSpeechBase64 } = await import("@hair-simo/gcp/text-to-speech");
-
-    const body = await request.json();
     const parsed = parseDialogflowWebhook(body);
-    const uncertain = parsed.text.trim().length < 5 || parsed.confidence < 0.5;
 
-    const result = await runAssistant(
-      {
-        text: parsed.text,
-        locale: parsed.locale,
-        serviceId: String(parsed.parameters.serviceId ?? "damen-schnitt"),
-        appointmentId: parsed.parameters.appointmentId ? String(parsed.parameters.appointmentId) : undefined,
-      },
-      aiTools,
-    );
+    try {
+      const text = parsed.text.trim().slice(0, MAX_UTTERANCE_CHARS);
+      const uncertain = text.length < 5 || parsed.confidence < UNCERTAIN_CONFIDENCE;
 
-    await prisma.callLog.create({
-      data: {
-        locale: result.locale,
-        fromNumber: parsed.session,
-        toNumber: "dialogflow-cx",
-        summary: `Intent ${result.intent}: ${result.response}`,
-        actionTaken: uncertain ? "fallback-human-handover" : result.intent,
-        fallback: uncertain,
-      },
-    });
+      const result = await runAssistant(
+        {
+          text: text.length > 0 ? text : " ",
+          locale: parsed.locale,
+          serviceId: parameterString(parsed.parameters.serviceId) ?? "damen-schnitt",
+          appointmentId: parameterString(parsed.parameters.appointmentId),
+        },
+        createAiTools(parsed.locale),
+      );
 
-    const message = uncertain
-      ? "Sorry, I could not confidently process your request. We will call you back shortly."
-      : result.response;
+      await prisma.callLog.create({
+        data: {
+          locale: result.locale,
+          fromNumber: parsed.session.slice(0, MAX_PARAMETER_CHARS),
+          toNumber: "dialogflow-cx",
+          summary: `Intent ${result.intent}: ${result.response}`.slice(0, MAX_CALL_LOG_SUMMARY),
+          actionTaken: uncertain ? "fallback-human-handover" : result.intent,
+          fallback: uncertain,
+        },
+      });
 
-    const audio = await synthesizeSpeechBase64({ text: message, locale: result.locale });
-    const response =
-      audio.audioBase64.length > 0
-        ? buildDialogflowPlayAudioResponse({
-            text: message,
-            audioBase64: audio.audioBase64,
+      const message = uncertain ? UNCERTAIN_MESSAGE : result.response;
+      if (message.length > MAX_TTS_CHARS) {
+        log.warn("skipping speech synthesis for an oversized answer", {
+          length: message.length,
+        });
+        return NextResponse.json(
+          buildDialogflowResponse(message.slice(0, MAX_TTS_CHARS), {
+            intent: result.intent,
             locale: result.locale,
-          })
-        : buildDialogflowResponse(message, { intent: result.intent, locale: result.locale });
+          }),
+        );
+      }
 
-    return NextResponse.json(response);
-  } catch {
-    const { buildDialogflowResponse } = await import("@hair-simo/gcp/dialogflow");
-    const fallback = buildDialogflowResponse(
-      "An error occurred. Please try again or call us directly.",
-    );
-    return NextResponse.json(fallback, { status: 200 });
-  }
-}
+      const { synthesizeSpeechBase64 } = await import("@hair-simo/gcp/text-to-speech");
+      const audio = await synthesizeSpeechBase64({ text: message, locale: result.locale });
+      return NextResponse.json(
+        audio.audioBase64.length > 0
+          ? buildDialogflowPlayAudioResponse({
+              text: message,
+              audioBase64: audio.audioBase64,
+              locale: result.locale,
+            })
+          : buildDialogflowResponse(message, { intent: result.intent, locale: result.locale }),
+      );
+    } catch (error) {
+      // The caller is a phone line: it has to be able to say something. The detail stays
+      // in the structured log, never in the spoken response.
+      log.error("dialogflow fulfilment failed", {
+        session: parsed.session.slice(0, MAX_PARAMETER_CHARS),
+        reason: error instanceof Error ? error.message : String(error),
+      });
+      return NextResponse.json(buildDialogflowResponse(FAILURE_MESSAGE));
+    }
+  },
+);

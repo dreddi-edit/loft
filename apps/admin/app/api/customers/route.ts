@@ -1,9 +1,15 @@
-import { NextRequest, NextResponse } from "next/server";
 import { salonRepository } from "@hair-simo/core";
 import { z } from "zod";
-import { requireSession } from "../../../lib/auth";
+import { adminRoute, paginated, paginationShape } from "../../../lib/admin-api";
 
-const schema = z
+const listQuerySchema = z
+  .object({
+    query: z.string().trim().max(200).optional(),
+    ...paginationShape,
+  })
+  .strict();
+
+const createSchema = z
   .object({
     email: z.string().trim().email().max(254).optional(),
     phone: z.string().trim().max(30).optional(),
@@ -15,34 +21,38 @@ const schema = z
   })
   .strict();
 
-export async function GET(request: NextRequest) {
-  try {
-    await requireSession(request, ["owner", "manager", "staff"]);
-    const search = request.nextUrl.searchParams;
+export const GET = adminRoute(
+  { roles: ["owner", "manager", "staff"], route: "/api/customers", query: listQuerySchema },
+  async ({ query }) => {
     const customers = await salonRepository.listCustomers({
-      query: search.get("query")?.trim() || undefined,
-      skip: Math.max(0, Number(search.get("offset") ?? 0)),
-      take: Math.min(100, Math.max(1, Number(search.get("limit") ?? 50))),
+      query: query.query,
+      skip: query.offset,
+      take: query.limit,
     });
-    return NextResponse.json({ data: customers });
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "AUTH_ERROR" },
-      { status: 403 },
-    );
-  }
-}
+    return paginated(customers, query);
+  },
+);
 
-export async function POST(request: NextRequest) {
-  try {
-    await requireSession(request, ["owner", "manager", "staff"]);
-    const input = schema.parse(await request.json());
-    const customer = await salonRepository.createCustomer(input);
-    return NextResponse.json({ data: customer }, { status: 201 });
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "CREATE_FAILED" },
-      { status: 400 },
-    );
-  }
-}
+export const POST = adminRoute<z.infer<typeof createSchema>>(
+  {
+    roles: ["owner", "manager", "staff"],
+    route: "/api/customers",
+    schema: createSchema,
+    successStatus: 201,
+    audit: { entityType: "customer", action: "customer.create" },
+  },
+  async ({ body, audit }) => {
+    const customer = await salonRepository.createCustomer(body);
+    audit.setEntityId(customer.id);
+    audit.setAfter({
+      id: customer.id,
+      firstName: customer.firstName,
+      lastName: customer.lastName,
+      email: customer.email,
+      phone: customer.phone,
+      locale: customer.locale,
+      marketingOptIn: customer.marketingOptIn,
+    });
+    return { data: customer };
+  },
+);

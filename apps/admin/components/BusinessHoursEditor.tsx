@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import type { AppLocale } from "@hair-simo/i18n";
+import { salonWeekdayNames } from "../lib/admin-datetime";
 
 type Hour = {
   id: string;
@@ -9,8 +11,6 @@ type Hour = {
   endMin: number;
   isOpen: boolean;
 };
-
-const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 function minutesToTime(minutes: number) {
   return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
@@ -21,9 +21,10 @@ function timeToMinutes(value: string) {
   return hours * 60 + minutes;
 }
 
-export function BusinessHoursEditor({ hours }: { hours: Hour[] }) {
+export function BusinessHoursEditor({ hours, locale }: { hours: Hour[]; locale: AppLocale }) {
   const [items, setItems] = useState(hours);
   const [message, setMessage] = useState<string | null>(null);
+  const dayNames = salonWeekdayNames(locale);
 
   async function save(entry: Hour) {
     setMessage(null);

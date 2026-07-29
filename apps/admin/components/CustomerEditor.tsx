@@ -2,6 +2,8 @@
 
 import { FormEvent, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import type { AppLocale } from "@hair-simo/i18n";
+import { formatSalonDate } from "../lib/admin-datetime";
 
 type Customer = {
   id: string;
@@ -16,7 +18,7 @@ type Customer = {
   appointments?: Array<{ id: string; startsAt: string | Date; status: string }>;
 };
 
-export function CustomerEditor({ customers }: { customers: Customer[] }) {
+export function CustomerEditor({ customers, locale }: { customers: Customer[]; locale: AppLocale }) {
   const router = useRouter();
   const params = useSearchParams();
   const [items, setItems] = useState(customers);
@@ -131,7 +133,7 @@ export function CustomerEditor({ customers }: { customers: Customer[] }) {
             <header>
               <span className="admin-kicker">Customer profile</span>
               <h2>{selected.firstName} {selected.lastName}</h2>
-              <p>Customer since {selected.createdAt ? new Date(selected.createdAt).toLocaleDateString("en") : "—"}</p>
+              <p>Customer since {selected.createdAt ? formatSalonDate(selected.createdAt, locale) : "—"}</p>
             </header>
             <div className="admin-form-split">
               <label>First name<input className="admin-field" value={selected.firstName} onChange={(event) => setItems((current) => current.map((item) => item.id === selected.id ? { ...item, firstName: event.target.value } : item))} /></label>
@@ -149,7 +151,7 @@ export function CustomerEditor({ customers }: { customers: Customer[] }) {
               {selected.notes?.map((entry) => (
                 <div className="admin-note" key={entry.id}>
                   <p>{entry.note}</p>
-                  <time>{new Date(entry.createdAt).toLocaleDateString("en")}</time>
+                  <time>{formatSalonDate(entry.createdAt, locale)}</time>
                 </div>
               ))}
               <div className="admin-note-create">
@@ -161,7 +163,7 @@ export function CustomerEditor({ customers }: { customers: Customer[] }) {
               <h3>Appointment history</h3>
               {selected.appointments?.slice(0, 8).map((appointment) => (
                 <div className="admin-history-row" key={appointment.id}>
-                  <span>{new Date(appointment.startsAt).toLocaleDateString("en")}</span>
+                  <span>{formatSalonDate(appointment.startsAt, locale)}</span>
                   <span className={`admin-status ${appointment.status}`}>{appointment.status}</span>
                 </div>
               ))}

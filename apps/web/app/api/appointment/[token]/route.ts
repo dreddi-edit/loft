@@ -1,53 +1,133 @@
-import { NextRequest, NextResponse } from "next/server";
-import { BookingService, createAppointmentAccessToken, salonRepository } from "@hair-simo/core";
+import { BookingService, salonRepository, verifyAppointmentAccessToken } from "@hair-simo/core";
+import { z } from "zod";
+import { HttpError } from "../../../../lib/api-errors";
+import { apiRoute } from "../../../../lib/api-handler";
+import { withDomainErrors } from "../../_lib/domain-errors";
 
 const bookingService = new BookingService();
 
-export async function GET(_request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+const MANAGE_BODY_LIMIT_BYTES = 2_048;
+const DEFAULT_CANCEL_REASON = "customer request";
+
+type TokenParams = { token: string };
+type Appointment = NonNullable<Awaited<ReturnType<typeof salonRepository.findAppointmentById>>>;
+
+const manageActionSchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("cancel"),
+    reason: z.string().trim().max(500).optional(),
+  }),
+  z.object({
+    action: z.literal("reschedule"),
+    startsAt: z.string().trim().datetime(),
+  }),
+]);
+
+function invalidToken(error: unknown): HttpError {
+  return new HttpError("UNAUTHORIZED", {
+    message: "This appointment link is invalid or has expired.",
+    cause: error,
+    logMessage: "appointment access token rejected",
+  });
+}
+
+/**
+ * The token names the appointment, so it is verified twice: once to learn which row to
+ * read, and once against that row's own ids. The second pass is what stops a token minted
+ * for one customer from being replayed against another customer's appointment — the GET
+ * path used to check it and the POST path did not, so cancel and reschedule ran on the
+ * claim alone.
+ */
+async function loadAppointmentForToken(token: string): Promise<Appointment> {
+  let appointmentId: string;
   try {
-    const { verifyAppointmentAccessToken } = await import("@hair-simo/core");
-    const { token } = await params;
-    const access = await verifyAppointmentAccessToken(token);
-    const appointment = await salonRepository.findAppointmentById(access.appointmentId);
-    if (!appointment || appointment.customerId !== access.customerId) {
-      return NextResponse.json({ error: "NOT_FOUND" }, { status: 404 });
-    }
-    return NextResponse.json({ data: appointment });
+    appointmentId = (await verifyAppointmentAccessToken(token)).appointmentId;
   } catch (error) {
-    return NextResponse.json(
-      { error: "INVALID_TOKEN", message: error instanceof Error ? error.message : "unknown error" },
-      { status: 401 },
-    );
+    throw invalidToken(error);
   }
-}
 
-export async function POST(request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+  const appointment = await salonRepository.findAppointmentById(appointmentId);
+  if (!appointment) {
+    throw new HttpError("APPOINTMENT_NOT_FOUND", {
+      logMessage: `appointment ${appointmentId} referenced by a valid token does not exist`,
+    });
+  }
+
   try {
-    const { verifyAppointmentAccessToken } = await import("@hair-simo/core");
-    const { token } = await params;
-    const access = await verifyAppointmentAccessToken(token);
-    const body = await request.json();
-    const action = String(body.action ?? "");
-
-    if (action === "cancel") {
-      const appointment = await bookingService.cancel(access.appointmentId, String(body.reason ?? "customer request"));
-      return NextResponse.json({ data: appointment });
-    }
-
-    if (action === "reschedule") {
-      const appointment = await bookingService.reschedule(access.appointmentId, String(body.startsAt));
-      return NextResponse.json({ data: appointment });
-    }
-
-    return NextResponse.json({ error: "INVALID_ACTION" }, { status: 400 });
+    await verifyAppointmentAccessToken(token, {
+      appointmentId: appointment.id,
+      customerId: appointment.customerId,
+    });
   } catch (error) {
-    return NextResponse.json(
-      { error: "MANAGE_FAILED", message: error instanceof Error ? error.message : "unknown error" },
-      { status: 400 },
-    );
+    throw invalidToken(error);
   }
+
+  return appointment;
 }
 
-export async function createManageTokenForAppointment(appointmentId: string, customerId: string) {
-  return createAppointmentAccessToken({ appointmentId, customerId });
+/**
+ * A manage link travels by email and lives in browser history, so the response carries
+ * only what the manage screen renders. Contact details are not part of it.
+ */
+function present(appointment: Appointment) {
+  return {
+    id: appointment.id,
+    status: appointment.status,
+    startsAt: appointment.startsAt,
+    endsAt: appointment.endsAt,
+    locale: appointment.locale,
+    service: {
+      slug: appointment.service.slug,
+      translations: appointment.service.translations.map((entry) => ({
+        locale: entry.locale,
+        name: entry.name,
+      })),
+    },
+    staff: appointment.staff ? { displayName: appointment.staff.displayName } : null,
+    customer: {
+      firstName: appointment.customer.firstName,
+      lastName: appointment.customer.lastName,
+    },
+  };
 }
+
+async function presentById(appointmentId: string) {
+  const appointment = await salonRepository.findAppointmentById(appointmentId);
+  if (!appointment) {
+    throw new HttpError("APPOINTMENT_NOT_FOUND", {
+      logMessage: `appointment ${appointmentId} disappeared while being managed`,
+    });
+  }
+  return present(appointment);
+}
+
+export const GET = apiRoute<unknown, undefined, TokenParams>(
+  {
+    route: "/api/appointment/[token]",
+    methods: ["GET"],
+    policy: "availability",
+  },
+  async ({ params }) => ({ data: present(await loadAppointmentForToken(params.token)) }),
+);
+
+export const POST = apiRoute<z.infer<typeof manageActionSchema>, undefined, TokenParams>(
+  {
+    route: "/api/appointment/[token]",
+    methods: ["POST"],
+    policy: "booking",
+    bodyLimitBytes: MANAGE_BODY_LIMIT_BYTES,
+    schema: manageActionSchema,
+  },
+  async ({ body, params }) => {
+    const appointment = await loadAppointmentForToken(params.token);
+
+    if (body.action === "cancel") {
+      const reason = body.reason && body.reason.length > 0 ? body.reason : DEFAULT_CANCEL_REASON;
+      await withDomainErrors(() => bookingService.cancel(appointment.id, reason));
+      return { data: await presentById(appointment.id) };
+    }
+
+    await withDomainErrors(() => bookingService.reschedule(appointment.id, body.startsAt));
+    return { data: await presentById(appointment.id) };
+  },
+);

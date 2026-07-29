@@ -2,6 +2,17 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import type { AppLocale } from "@hair-simo/i18n";
+import { parseSalonDay, salonDayOfWeek } from "@hair-simo/core/time";
+import {
+  formatSalonDayNumber,
+  formatSalonTime,
+  formatSalonWeekday,
+  salonInstantOnDay,
+  salonMinutesFromMidnight,
+  shiftSalonDayKey,
+  toDateInputValue,
+} from "../lib/admin-datetime";
 
 type Appointment = {
   id: string;
@@ -15,46 +26,45 @@ type Appointment = {
 
 type Staff = { id: string; displayName: string };
 
-function startOfWeek(value: Date) {
-  const date = new Date(value);
-  const day = date.getDay() || 7;
-  date.setDate(date.getDate() - day + 1);
-  date.setHours(0, 0, 0, 0);
-  return date;
+/** Monday of the salon week containing `dayKey`, as a salon day key. */
+function startOfSalonWeekKey(dayKey: string) {
+  return shiftSalonDayKey(dayKey, -((salonDayOfWeek(parseSalonDay(dayKey)) + 6) % 7));
 }
 
-export function CalendarWorkspace({ appointments, staff }: { appointments: Appointment[]; staff: Staff[] }) {
+export function CalendarWorkspace({
+  appointments,
+  staff,
+  locale,
+}: {
+  appointments: Appointment[];
+  staff: Staff[];
+  locale: AppLocale;
+}) {
   const router = useRouter();
   const [weekOffset, setWeekOffset] = useState(0);
   const [staffId, setStaffId] = useState("all");
   const [busy, setBusy] = useState<string | null>(null);
-  const weekStart = useMemo(() => {
-    const date = startOfWeek(new Date());
-    date.setDate(date.getDate() + weekOffset * 7);
-    return date;
-  }, [weekOffset]);
-  const days = useMemo(
-    () => Array.from({ length: 7 }, (_, index) => {
-      const date = new Date(weekStart);
-      date.setDate(date.getDate() + index);
-      return date;
-    }),
-    [weekStart],
+  const todayKey = toDateInputValue(new Date());
+  const weekStartKey = useMemo(
+    () => shiftSalonDayKey(startOfSalonWeekKey(todayKey), weekOffset * 7),
+    [todayKey, weekOffset],
+  );
+  const dayKeys = useMemo(
+    () => Array.from({ length: 7 }, (_, index) => shiftSalonDayKey(weekStartKey, index)),
+    [weekStartKey],
   );
 
+  const weekStart = parseSalonDay(weekStartKey);
+  const weekEnd = parseSalonDay(shiftSalonDayKey(weekStartKey, 7));
   const visible = appointments.filter((appointment) => {
     const date = new Date(appointment.startsAt);
-    const weekEnd = new Date(weekStart);
-    weekEnd.setDate(weekEnd.getDate() + 7);
     return date >= weekStart && date < weekEnd && (staffId === "all" || appointment.staff?.id === staffId);
   });
 
-  async function moveAppointment(appointmentId: string, targetDay: Date) {
+  async function moveAppointment(appointmentId: string, targetDayKey: string) {
     const appointment = appointments.find((item) => item.id === appointmentId);
     if (!appointment) return;
-    const current = new Date(appointment.startsAt);
-    const next = new Date(targetDay);
-    next.setHours(current.getHours(), current.getMinutes(), 0, 0);
+    const next = salonInstantOnDay(targetDayKey, salonMinutesFromMidnight(appointment.startsAt));
     setBusy(appointmentId);
     const response = await fetch(`/api/appointments/${appointmentId}/reschedule`, {
       method: "POST",
@@ -85,26 +95,27 @@ export function CalendarWorkspace({ appointments, staff }: { appointments: Appoi
           <span />
           {Array.from({ length: 11 }, (_, index) => <span key={index}>{String(index + 8).padStart(2, "0")}:00</span>)}
         </div>
-        {days.map((day) => {
+        {dayKeys.map((dayKey) => {
+          const day = parseSalonDay(dayKey);
           const dayAppointments = visible.filter((appointment) => (
-            new Date(appointment.startsAt).toDateString() === day.toDateString()
+            toDateInputValue(appointment.startsAt) === dayKey
           ));
-          const isToday = day.toDateString() === new Date().toDateString();
+          const isToday = dayKey === todayKey;
           return (
             <div
               className={`admin-calendar-day ${isToday ? "today" : ""}`}
-              key={day.toISOString()}
+              key={dayKey}
               onDragOver={(event) => event.preventDefault()}
-              onDrop={(event) => void moveAppointment(event.dataTransfer.getData("appointmentId"), day)}
+              onDrop={(event) => void moveAppointment(event.dataTransfer.getData("appointmentId"), dayKey)}
             >
               <header>
-                <span>{day.toLocaleDateString("en", { weekday: "short" })}</span>
-                <strong>{day.getDate()}</strong>
+                <span>{formatSalonWeekday(day, locale)}</span>
+                <strong>{formatSalonDayNumber(day, locale)}</strong>
               </header>
               <div className="admin-calendar-lanes">
                 {dayAppointments.map((appointment) => {
                   const start = new Date(appointment.startsAt);
-                  const top = Math.max(0, ((start.getHours() - 8) * 60 + start.getMinutes()) / 660) * 100;
+                  const top = Math.max(0, (salonMinutesFromMidnight(start) - 8 * 60) / 660) * 100;
                   const duration = Math.max(30, (new Date(appointment.endsAt).getTime() - start.getTime()) / 60_000);
                   const height = Math.max(7, (duration / 660) * 100);
                   return (
@@ -115,7 +126,7 @@ export function CalendarWorkspace({ appointments, staff }: { appointments: Appoi
                       className={`admin-calendar-event ${appointment.status} ${busy === appointment.id ? "busy" : ""}`}
                       style={{ top: `${top}%`, height: `${height}%` }}
                     >
-                      <time>{start.toLocaleTimeString("de-IT", { hour: "2-digit", minute: "2-digit" })}</time>
+                      <time>{formatSalonTime(start, locale)}</time>
                       <strong>{appointment.customer.firstName} {appointment.customer.lastName}</strong>
                       <small>{appointment.service.slug.replaceAll("-", " ")}</small>
                       <em>{appointment.staff?.displayName ?? "Open"}</em>

@@ -5,6 +5,7 @@ const rootDir = __dirname;
 
 const workspaceAlias = {
   "@hair-simo/ui": path.resolve(rootDir, "packages/ui/src/index.tsx"),
+  "@hair-simo/core/time": path.resolve(rootDir, "packages/core/src/time.ts"),
   "@hair-simo/core": path.resolve(rootDir, "packages/core/src/index.ts"),
   "@hair-simo/db": path.resolve(rootDir, "packages/db/src/index.ts"),
   "@hair-simo/ai": path.resolve(rootDir, "packages/ai/src/index.ts"),

@@ -1,18 +1,27 @@
-import { NextRequest, NextResponse } from "next/server";
 import { NotificationService } from "@hair-simo/core";
-import { requireSession } from "../../../../../lib/auth";
+import { adminRoute } from "../../../../../lib/admin-api";
 
 const notificationService = new NotificationService();
 
-export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    await requireSession(request, ["owner", "manager"]);
-    const { id } = await params;
-    return NextResponse.json({ data: await notificationService.retry(id) });
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "RETRY_FAILED" },
-      { status: 400 },
-    );
-  }
-}
+export const POST = adminRoute<unknown, undefined, { id: string }>(
+  {
+    roles: ["owner", "manager"],
+    route: "/api/notifications/[id]/retry",
+    audit: {
+      entityType: "notificationLog",
+      action: "notification.retry",
+      entityId: (params) => params.id,
+    },
+  },
+  async ({ params, audit }) => {
+    const result = await notificationService.retry(params.id);
+    if (result.record) {
+      audit.setAfter({
+        status: result.record.status,
+        attempts: result.record.attempts,
+        channel: result.record.channel,
+      });
+    }
+    return { data: result };
+  },
+);

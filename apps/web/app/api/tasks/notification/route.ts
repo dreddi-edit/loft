@@ -1,36 +1,41 @@
-import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { NotificationService } from "@hair-simo/core";
-
-const taskSchema = z.object({
-  type: z.string(),
-  data: z.record(z.string(), z.unknown()),
-});
+import { z } from "zod";
+import { apiRoute } from "../../../../lib/api-handler";
 
 const notificationService = new NotificationService();
 
-export async function POST(request: NextRequest) {
-  const authHeader = request.headers.get("authorization");
-  const expectedSecret = process.env.GCP_CLOUD_TASKS_SECRET;
-  if (expectedSecret && authHeader !== `Bearer ${expectedSecret}`) {
-    return NextResponse.json({ error: "UNAUTHORIZED" }, { status: 401 });
-  }
+const TASK_BODY_LIMIT_BYTES = 8_192;
 
-  try {
-    const payload = taskSchema.parse(await request.json());
-    if (payload.type === "notification.send") {
-      const channel = String(payload.data.channel ?? "web") as "web" | "sms" | "whatsapp" | "voice";
-      await notificationService.send({
-        channel,
-        recipient: String(payload.data.recipient ?? ""),
-        message: String(payload.data.message ?? ""),
-      });
+const taskSchema = z.object({
+  type: z.string().trim().min(1).max(100),
+  data: z.record(z.string(), z.unknown()).default({}),
+});
+
+const notificationTaskSchema = z.object({
+  channel: z.enum(["web", "sms", "whatsapp", "voice"]).default("web"),
+  recipient: z.string().trim().min(3).max(254),
+  subject: z.string().trim().max(200).optional(),
+  message: z.string().trim().min(1).max(4_000),
+  locale: z.enum(["de", "it", "fr", "en"]).optional(),
+});
+
+export const POST = apiRoute<z.infer<typeof taskSchema>>(
+  {
+    route: "/api/tasks/notification",
+    methods: ["POST"],
+    policy: "internal",
+    sharedSecret: "cloudTasks",
+    bodyLimitBytes: TASK_BODY_LIMIT_BYTES,
+    schema: taskSchema,
+  },
+  async ({ body, log }) => {
+    if (body.type !== "notification.send") {
+      log.warn("unknown cloud task type ignored", { type: body.type });
+      return { ok: true, handled: false };
     }
-    return NextResponse.json({ ok: true });
-  } catch (error) {
-    return NextResponse.json(
-      { error: "TASK_FAILED", message: error instanceof Error ? error.message : "unknown error" },
-      { status: 400 },
-    );
-  }
-}
+
+    const payload = notificationTaskSchema.parse(body.data);
+    const delivery = await notificationService.send(payload);
+    return { ok: true, handled: true, status: delivery.status };
+  },
+);

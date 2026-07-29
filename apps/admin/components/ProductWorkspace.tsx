@@ -2,6 +2,8 @@
 
 import { FormEvent, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import type { AppLocale } from "@hair-simo/i18n";
+import { formatSalonDate } from "../lib/admin-datetime";
 
 type Movement = { id: string; delta: number; reason: string | null; createdAt: string | Date };
 type Product = {
@@ -13,7 +15,7 @@ type Product = {
   inventoryMovements?: Movement[];
 };
 
-export function ProductWorkspace({ products }: { products: Product[] }) {
+export function ProductWorkspace({ products, locale }: { products: Product[]; locale: AppLocale }) {
   const router = useRouter();
   const [items, setItems] = useState(products);
   const [query, setQuery] = useState("");
@@ -131,7 +133,7 @@ export function ProductWorkspace({ products }: { products: Product[] }) {
                 <div className="admin-history-row" key={movement.id}>
                   <strong className={movement.delta < 0 ? "admin-negative" : "admin-positive"}>{movement.delta > 0 ? "+" : ""}{movement.delta}</strong>
                   <span>{movement.reason ?? "Stock adjustment"}</span>
-                  <small>{new Date(movement.createdAt).toLocaleDateString("en")}</small>
+                  <small>{formatSalonDate(movement.createdAt, locale)}</small>
                 </div>
               ))}
             </div>

@@ -1,19 +1,27 @@
-import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { NotificationService } from "@hair-simo/core";
-
-const schema = z.object({
-  name: z.string().min(1),
-  email: z.string().email(),
-  message: z.string().min(5),
-  locale: z.enum(["de", "it", "fr", "en"]).default("en"),
-});
+import { z } from "zod";
+import { apiRoute } from "../../../lib/api-handler";
 
 const notificationService = new NotificationService();
 
-export async function POST(request: NextRequest) {
-  try {
-    const body = schema.parse(await request.json());
+const CONTACT_BODY_LIMIT_BYTES = 8_192;
+
+const contactSchema = z.object({
+  name: z.string().trim().min(1).max(100),
+  email: z.string().trim().email().max(254),
+  message: z.string().trim().min(5).max(2_000),
+  locale: z.enum(["de", "it", "fr", "en"]).default("en"),
+});
+
+export const POST = apiRoute<z.infer<typeof contactSchema>>(
+  {
+    route: "/api/contact",
+    methods: ["POST"],
+    policy: "contact",
+    bodyLimitBytes: CONTACT_BODY_LIMIT_BYTES,
+    schema: contactSchema,
+  },
+  async ({ body }) => {
     const salonEmail = process.env.CONTACT_INBOX_EMAIL ?? "info@hairsimo.it";
     await notificationService.send({
       channel: "web",
@@ -22,11 +30,6 @@ export async function POST(request: NextRequest) {
       message: `From: ${body.name} <${body.email}>\n\n${body.message}`,
       locale: body.locale,
     });
-    return NextResponse.json({ ok: true });
-  } catch (error) {
-    return NextResponse.json(
-      { error: "CONTACT_FAILED", message: error instanceof Error ? error.message : "unknown error" },
-      { status: 400 },
-    );
-  }
-}
+    return { ok: true };
+  },
+);

@@ -1,6 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import type { AppLocale } from "@hair-simo/i18n";
+import { formatSalonDateTime } from "../lib/admin-datetime";
 
 type Notification = {
   id: string;
@@ -12,7 +14,13 @@ type Notification = {
   createdAt: string | Date;
 };
 
-export function NotificationWorkspace({ notifications }: { notifications: Notification[] }) {
+export function NotificationWorkspace({
+  notifications,
+  locale,
+}: {
+  notifications: Notification[];
+  locale: AppLocale;
+}) {
   const [channel, setChannel] = useState("all");
   const [items, setItems] = useState(notifications);
   const [busy, setBusy] = useState<string | null>(null);
@@ -48,7 +56,7 @@ export function NotificationWorkspace({ notifications }: { notifications: Notifi
           <tbody>
             {visible.map((entry) => (
               <tr key={entry.id}>
-                <td>{new Date(entry.createdAt).toLocaleString("en")}</td>
+                <td>{formatSalonDateTime(entry.createdAt, locale)}</td>
                 <td>{entry.templateKey}</td>
                 <td>{entry.recipient}</td>
                 <td>{entry.channel}</td>

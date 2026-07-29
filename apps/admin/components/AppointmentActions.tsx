@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { dateTimeLocalToIso, toDateTimeLocalValue } from "../lib/admin-datetime";
 
 type Appointment = {
   id: string;
@@ -15,9 +16,7 @@ export function AppointmentActions({ appointment }: { appointment: Appointment }
   const [status, setStatus] = useState(appointment.status);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [startsAt, setStartsAt] = useState(
-    new Date(appointment.startsAt).toISOString().slice(0, 16),
-  );
+  const [startsAt, setStartsAt] = useState(toDateTimeLocalValue(appointment.startsAt));
 
   async function runAction(action: "cancel" | "reschedule" | "confirm" | "no_show" | "complete") {
     setBusy(true);
@@ -27,7 +26,7 @@ export function AppointmentActions({ appointment }: { appointment: Appointment }
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         reason: "admin action",
-        startsAt: new Date(startsAt).toISOString(),
+        startsAt: dateTimeLocalToIso(startsAt),
       }),
     });
     const json = await response.json();
