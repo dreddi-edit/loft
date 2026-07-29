@@ -113,17 +113,27 @@ async function seedServices() {
 }
 
 async function seedBusinessHours() {
-  await prisma.businessHours.deleteMany();
   const ranges = [
-    { id: "day-0", dayOfWeek: 0, startMin: 0, endMin: 0, isOpen: false },
-    { id: "day-1", dayOfWeek: 1, startMin: 0, endMin: 0, isOpen: false },
-    { id: "day-2", dayOfWeek: 2, startMin: 8 * 60, endMin: 17 * 60, isOpen: true },
-    { id: "day-3", dayOfWeek: 3, startMin: 8 * 60, endMin: 16 * 60, isOpen: true },
-    { id: "day-4", dayOfWeek: 4, startMin: 8 * 60, endMin: 17 * 60, isOpen: true },
-    { id: "day-5", dayOfWeek: 5, startMin: 8 * 60, endMin: 17 * 60, isOpen: true },
-    { id: "day-6", dayOfWeek: 6, startMin: 8 * 60, endMin: 16 * 60, isOpen: true },
+    { dayOfWeek: 0, startMin: 0, endMin: 0, isOpen: false },
+    { dayOfWeek: 1, startMin: 0, endMin: 0, isOpen: false },
+    { dayOfWeek: 2, startMin: 8 * 60, endMin: 17 * 60, isOpen: true },
+    { dayOfWeek: 3, startMin: 8 * 60, endMin: 16 * 60, isOpen: true },
+    { dayOfWeek: 4, startMin: 8 * 60, endMin: 17 * 60, isOpen: true },
+    { dayOfWeek: 5, startMin: 8 * 60, endMin: 17 * 60, isOpen: true },
+    { dayOfWeek: 6, startMin: 8 * 60, endMin: 16 * 60, isOpen: true },
   ];
-  await prisma.businessHours.createMany({ data: ranges });
+
+  await prisma.businessHours.deleteMany({
+    where: { id: { notIn: ranges.map((range) => `day-${range.dayOfWeek}`) } },
+  });
+
+  for (const range of ranges) {
+    await prisma.businessHours.upsert({
+      where: { id: `day-${range.dayOfWeek}` },
+      update: { startMin: range.startMin, endMin: range.endMin, isOpen: range.isOpen },
+      create: { id: `day-${range.dayOfWeek}`, ...range },
+    });
+  }
 }
 
 async function removeLegacyDemoData() {
@@ -145,10 +155,7 @@ async function removeLegacyDemoData() {
     where: { slug: { in: ["haircut-women", "color-root-touchup", "mens-cut"] } },
   });
   await prisma.product.deleteMany({
-    where: { sku: { in: ["PROD-ARGAN-50"] } },
-  });
-  await prisma.inventoryItem.deleteMany({
-    where: { sku: { in: ["SHAMPOO-001"] } },
+    where: { sku: { in: ["PROD-ARGAN-50", "SHAMPOO-001"] } },
   });
 }
 

@@ -8,6 +8,14 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: hair_simo
+      TZ: Europe/Rome
+      PGTZ: Europe/Rome
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d hair_simo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     volumes:
       - hair_simo_pg:/var/lib/postgresql/data
 

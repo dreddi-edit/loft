@@ -1,0 +1,47 @@
+# dependencies (reinstalled inside the image from the lockfile)
+node_modules
+**/node_modules
+
+# build output — stale artefacts must never leak into the image
+.next
+**/.next
+dist
+**/dist
+coverage
+**/coverage
+.turbo
+**/.turbo
+*.tsbuildinfo
+
+# vcs / ci metadata
+.git
+.gitignore
+.github
+
+# environment / secrets
+.env
+.env.*
+
+# terraform state and provider cache contain plaintext secrets
+infra/terraform/.terraform
+**/.terraform
+*.tfstate
+*.tfstate.*
+*.tfvars
+
+# gcp credentials
+*-service-account.json
+gcp-key*.json
+application_default_credentials.json
+
+# not needed to build the apps
+docs
+Dockerfile
+**/Dockerfile
+.dockerignore
+docker-compose.yml
+README.md
+
+# os / editor
+.DS_Store
+*.swp

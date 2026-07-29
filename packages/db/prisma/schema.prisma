@@ -44,6 +44,40 @@ enum InventoryMovementType {
   return
 }
 
+enum NotificationStatus {
+  pending
+  sent
+  failed
+  abandoned
+}
+
+enum WaitlistStatus {
+  active
+  notified
+  converted
+  expired
+  cancelled
+}
+
+enum CustomerNoteKind {
+  general
+  formula
+  allergy
+  preference
+}
+
+enum DataRequestType {
+  export
+  erasure
+}
+
+enum DataRequestStatus {
+  pending
+  processing
+  completed
+  failed
+}
+
 model User {
   id           String        @id @default(cuid())
   email        String        @unique
@@ -52,8 +86,8 @@ model User {
   lastName     String
   locale       String        @default("en")
   active       Boolean       @default(true)
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+  createdAt    DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime      @updatedAt @db.Timestamptz(3)
   staffProfile StaffProfile?
   roles        UserRole[]
 }
@@ -61,8 +95,8 @@ model User {
 model Role {
   id        String     @id @default(cuid())
   key       RoleKey    @unique
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  createdAt DateTime   @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime   @updatedAt @db.Timestamptz(3)
   users     UserRole[]
 }
 
@@ -70,72 +104,93 @@ model UserRole {
   id        String   @id @default(cuid())
   userId    String
   roleId    String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   role      Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
 
   @@unique([userId, roleId])
+  @@index([userId])
+  @@index([roleId])
 }
 
 model StaffProfile {
-  id            String                  @id @default(cuid())
-  userId        String                  @unique
-  displayName   String
-  bio           String?
-  phone         String?
-  locale        String                  @default("en")
-  isBookable    Boolean                 @default(true)
-  createdAt     DateTime                @default(now())
-  updatedAt     DateTime                @updatedAt
-  user          User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  staffServices StaffService[]
-  availability  StaffAvailabilityRule[]
-  timeOffs      StaffTimeOff[]
-  appointments  Appointment[]
+  id               String                  @id @default(cuid())
+  userId           String                  @unique
+  displayName      String
+  bio              String?
+  phone            String?
+  locale           String                  @default("en")
+  isBookable       Boolean                 @default(true)
+  googleCalendarId String?
+  createdAt        DateTime                @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime                @updatedAt @db.Timestamptz(3)
+  user             User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  staffServices    StaffService[]
+  availability     StaffAvailabilityRule[]
+  timeOffs         StaffTimeOff[]
+  appointments     Appointment[]
+  waitlistEntries  Waitlist[]
+  recurringSeries  RecurringSeries[]
 }
 
 model Customer {
-  id             String          @id @default(cuid())
-  email          String?         @unique
-  phone          String?         @unique
-  firstName      String
-  lastName       String
-  locale         String          @default("en")
-  sourceChannel  Channel         @default(web)
-  marketingOptIn Boolean         @default(false)
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  notes          CustomerNote[]
-  appointments   Appointment[]
-  consents       ConsentRecord[]
-  conversations  Conversation[]
-  callLogs       CallLog[]
+  id              String            @id @default(cuid())
+  email           String?           @unique
+  phone           String?           @unique
+  firstName       String
+  lastName        String
+  locale          String            @default("en")
+  sourceChannel   Channel           @default(web)
+  marketingOptIn  Boolean           @default(false)
+  deletedAt       DateTime?         @db.Timestamptz(3)
+  anonymizedAt    DateTime?         @db.Timestamptz(3)
+  createdAt       DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime          @updatedAt @db.Timestamptz(3)
+  notes           CustomerNote[]
+  appointments    Appointment[]
+  consents        ConsentRecord[]
+  conversations   Conversation[]
+  callLogs        CallLog[]
+  waitlistEntries Waitlist[]
+  recurringSeries RecurringSeries[]
+  dataRequests    DataRequest[]
+  vouchers        Voucher[]
+
+  @@index([deletedAt])
 }
 
 model CustomerNote {
-  id         String   @id @default(cuid())
+  id         String           @id @default(cuid())
   customerId String
   note       String
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  kind       CustomerNoteKind @default(general)
+  authorId   String?
+  pinned     Boolean          @default(false)
+  createdAt  DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime         @updatedAt @db.Timestamptz(3)
+  customer   Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([customerId, kind])
 }
 
 model Service {
-  id             String               @id @default(cuid())
-  slug           String               @unique
-  category       String
-  durationMin    Int
-  bufferAfterMin Int                  @default(10)
-  priceCents     Int
-  currency       String               @default("EUR")
-  isActive       Boolean              @default(true)
-  createdAt      DateTime             @default(now())
-  updatedAt      DateTime             @updatedAt
-  translations   ServiceTranslation[]
-  staffServices  StaffService[]
-  appointments   Appointment[]
+  id              String               @id @default(cuid())
+  slug            String               @unique
+  category        String
+  durationMin     Int
+  bufferAfterMin  Int                  @default(10)
+  priceCents      Int
+  currency        String               @default("EUR")
+  isActive        Boolean              @default(true)
+  createdAt       DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime             @updatedAt @db.Timestamptz(3)
+  translations    ServiceTranslation[]
+  staffServices   StaffService[]
+  appointments    Appointment[]
+  waitlistEntries Waitlist[]
+  recurringSeries RecurringSeries[]
 }
 
 model ServiceTranslation {
@@ -144,23 +199,25 @@ model ServiceTranslation {
   locale      String
   name        String
   description String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
   service     Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
 
   @@unique([serviceId, locale])
+  @@index([serviceId])
 }
 
 model StaffService {
   id        String       @id @default(cuid())
   staffId   String
   serviceId String
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
+  createdAt DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime     @updatedAt @db.Timestamptz(3)
   staff     StaffProfile @relation(fields: [staffId], references: [id], onDelete: Cascade)
   service   Service      @relation(fields: [serviceId], references: [id], onDelete: Cascade)
 
   @@unique([staffId, serviceId])
+  @@index([serviceId])
 }
 
 model BusinessHours {
@@ -169,8 +226,10 @@ model BusinessHours {
   startMin  Int
   endMin    Int
   isOpen    Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([dayOfWeek])
 }
 
 model StaffAvailabilityRule {
@@ -179,20 +238,24 @@ model StaffAvailabilityRule {
   dayOfWeek Int
   startMin  Int
   endMin    Int
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
+  createdAt DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime     @updatedAt @db.Timestamptz(3)
   staff     StaffProfile @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@index([staffId, dayOfWeek])
 }
 
 model StaffTimeOff {
   id        String       @id @default(cuid())
   staffId   String
-  startsAt  DateTime
-  endsAt    DateTime
+  startsAt  DateTime     @db.Timestamptz(3)
+  endsAt    DateTime     @db.Timestamptz(3)
   reason    String?
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
+  createdAt DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime     @updatedAt @db.Timestamptz(3)
   staff     StaffProfile @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@index([staffId, startsAt, endsAt])
 }
 
 model Appointment {
@@ -200,21 +263,36 @@ model Appointment {
   customerId         String
   serviceId          String
   staffId            String?
-  startsAt           DateTime
-  endsAt             DateTime
+  seriesId           String?
+  startsAt           DateTime                   @db.Timestamptz(3)
+  endsAt             DateTime                   @db.Timestamptz(3)
   locale             String                     @default("en")
   status             AppointmentStatus          @default(pending)
   sourceChannel      Channel                    @default(web)
   notes              String?
   cancellationReason String?
-  createdAt          DateTime                   @default(now())
-  updatedAt          DateTime                   @updatedAt
+  depositRequired    Boolean                    @default(true)
+  noShowFeeCents     Int                        @default(0)
+  googleEventId      String?
+  createdAt          DateTime                   @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime                   @updatedAt @db.Timestamptz(3)
   customer           Customer                   @relation(fields: [customerId], references: [id])
   service            Service                    @relation(fields: [serviceId], references: [id])
   staff              StaffProfile?              @relation(fields: [staffId], references: [id])
+  series             RecurringSeries?           @relation(fields: [seriesId], references: [id], onDelete: SetNull)
   statusHistory      AppointmentStatusHistory[]
   payments           Payment[]
   notifications      NotificationLog[]
+  verification       BookingVerification?
+  reviewRequest      ReviewRequest?
+  voucherRedemptions VoucherRedemption[]
+
+  @@index([staffId, startsAt])
+  @@index([startsAt, status])
+  @@index([customerId])
+  @@index([serviceId])
+  @@index([seriesId])
+  @@index([googleEventId])
 }
 
 model AppointmentStatusHistory {
@@ -223,24 +301,33 @@ model AppointmentStatusHistory {
   status        AppointmentStatus
   changedBy     String?
   reason        String?
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
+  createdAt     DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime          @updatedAt @db.Timestamptz(3)
   appointment   Appointment       @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  @@index([appointmentId, createdAt])
 }
 
 model Payment {
-  id               String        @id @default(cuid())
-  appointmentId    String
-  provider         String
-  providerIntentId String?
-  amountCents      Int
-  currency         String        @default("EUR")
-  mode             String
-  status           PaymentStatus @default(pending)
-  createdAt        DateTime      @default(now())
-  updatedAt        DateTime      @updatedAt
-  appointment      Appointment   @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
-  refunds          Refund[]
+  id                 String              @id @default(cuid())
+  appointmentId      String
+  provider           String
+  providerIntentId   String?
+  idempotencyKey     String?             @unique
+  amountCents        Int
+  tipCents           Int                 @default(0)
+  refundedCents      Int                 @default(0)
+  currency           String              @default("EUR")
+  mode               String
+  status             PaymentStatus       @default(pending)
+  createdAt          DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime            @updatedAt @db.Timestamptz(3)
+  appointment        Appointment         @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  refunds            Refund[]
+  voucherRedemptions VoucherRedemption[]
+
+  @@index([appointmentId])
+  @@index([status, createdAt])
 }
 
 model Refund {
@@ -249,9 +336,11 @@ model Refund {
   amountCents   Int
   reason        String?
   providerRefId String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime @updatedAt @db.Timestamptz(3)
   payment       Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId])
 }
 
 model Conversation {
@@ -260,10 +349,13 @@ model Conversation {
   channel     Channel
   locale      String    @default("en")
   externalRef String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(3)
   customer    Customer? @relation(fields: [customerId], references: [id])
   messages    Message[]
+
+  @@index([externalRef])
+  @@index([customerId])
 }
 
 model Message {
@@ -272,9 +364,11 @@ model Message {
   role           String
   content        String
   metadata       Json?
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime     @updatedAt @db.Timestamptz(3)
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
 }
 
 model CallLog {
@@ -286,22 +380,33 @@ model CallLog {
   summary     String
   actionTaken String
   fallback    Boolean   @default(false)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(3)
   customer    Customer? @relation(fields: [customerId], references: [id])
+
+  @@index([createdAt])
+  @@index([customerId])
 }
 
 model NotificationLog {
-  id            String       @id @default(cuid())
+  id            String             @id @default(cuid())
   appointmentId String?
   channel       Channel
   recipient     String
   templateKey   String
   payload       Json
-  sentAt        DateTime?
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
-  appointment   Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  status        NotificationStatus @default(pending)
+  attempts      Int                @default(0)
+  lastError     String?
+  sentAt        DateTime?          @db.Timestamptz(3)
+  createdAt     DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime           @updatedAt @db.Timestamptz(3)
+  appointment   Appointment?       @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+
+  @@index([appointmentId])
+  @@index([templateKey, sentAt])
+  @@index([status, createdAt])
+  @@index([createdAt])
 }
 
 model ConsentRecord {
@@ -311,19 +416,11 @@ model ConsentRecord {
   granted    Boolean
   source     String
   metadata   Json?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @db.Timestamptz(3)
   customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-}
 
-model InventoryItem {
-  id        String   @id @default(cuid())
-  sku       String   @unique
-  name      String
-  quantity  Int      @default(0)
-  reorderAt Int      @default(5)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  @@index([customerId, type])
 }
 
 model Product {
@@ -332,9 +429,11 @@ model Product {
   name               String
   priceCents         Int
   stock              Int                 @default(0)
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
+  createdAt          DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime            @updatedAt @db.Timestamptz(3)
   inventoryMovements InventoryMovement[]
+
+  @@index([name])
 }
 
 model InventoryMovement {
@@ -344,8 +443,156 @@ model InventoryMovement {
   delta        Int
   balanceAfter Int
   reason       String                @default("")
-  createdAt    DateTime              @default(now())
+  createdAt    DateTime              @default(now()) @db.Timestamptz(3)
   product      Product               @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@index([productId, createdAt])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actorEmail String
+  actorRole  String
+  action     String
+  entityType String
+  entityId   String
+  before     Json?
+  after      Json?
+  ip         String?
+  userAgent  String?
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([entityType, entityId])
+  @@index([actorId, createdAt])
+  @@index([createdAt])
+}
+
+model Waitlist {
+  id                     String         @id @default(cuid())
+  customerId             String
+  serviceId              String
+  staffId                String?
+  earliestAt             DateTime       @db.Timestamptz(3)
+  latestAt               DateTime       @db.Timestamptz(3)
+  locale                 String         @default("en")
+  channel                Channel        @default(web)
+  status                 WaitlistStatus @default(active)
+  notifiedAt             DateTime?      @db.Timestamptz(3)
+  convertedAppointmentId String?
+  createdAt              DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt              DateTime       @updatedAt @db.Timestamptz(3)
+  customer               Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  service                Service        @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  staff                  StaffProfile?  @relation(fields: [staffId], references: [id], onDelete: SetNull)
+
+  @@index([serviceId, status])
+  @@index([earliestAt, latestAt])
+  @@index([customerId])
+  @@index([staffId])
+}
+
+model BookingVerification {
+  id            String      @id @default(cuid())
+  appointmentId String      @unique
+  tokenHash     String      @unique
+  expiresAt     DateTime    @db.Timestamptz(3)
+  verifiedAt    DateTime?   @db.Timestamptz(3)
+  sentCount     Int         @default(0)
+  createdAt     DateTime    @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime    @updatedAt @db.Timestamptz(3)
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+}
+
+model Voucher {
+  id                 String              @id @default(cuid())
+  code               String              @unique
+  initialCents       Int
+  remainingCents     Int
+  currency           String              @default("EUR")
+  expiresAt          DateTime?           @db.Timestamptz(3)
+  active             Boolean             @default(true)
+  issuedToCustomerId String?
+  note               String?
+  createdAt          DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime            @updatedAt @db.Timestamptz(3)
+  issuedToCustomer   Customer?           @relation(fields: [issuedToCustomerId], references: [id], onDelete: SetNull)
+  redemptions        VoucherRedemption[]
+
+  @@index([issuedToCustomerId])
+  @@index([active, expiresAt])
+}
+
+model VoucherRedemption {
+  id            String       @id @default(cuid())
+  voucherId     String
+  appointmentId String?
+  paymentId     String?
+  amountCents   Int
+  createdAt     DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime     @updatedAt @db.Timestamptz(3)
+  voucher       Voucher      @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+  appointment   Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  payment       Payment?     @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+
+  @@index([voucherId])
+  @@index([appointmentId])
+  @@index([paymentId])
+}
+
+model RecurringSeries {
+  id            String        @id @default(cuid())
+  customerId    String
+  serviceId     String
+  staffId       String?
+  intervalWeeks Int
+  nextAt        DateTime      @db.Timestamptz(3)
+  endsAt        DateTime?     @db.Timestamptz(3)
+  active        Boolean       @default(true)
+  locale        String        @default("en")
+  channel       Channel       @default(web)
+  createdAt     DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime      @updatedAt @db.Timestamptz(3)
+  customer      Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  service       Service       @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  staff         StaffProfile? @relation(fields: [staffId], references: [id], onDelete: SetNull)
+  appointments  Appointment[]
+
+  @@index([customerId])
+  @@index([serviceId])
+  @@index([staffId])
+  @@index([active, nextAt])
+}
+
+model ReviewRequest {
+  id            String      @id @default(cuid())
+  appointmentId String      @unique
+  sentAt        DateTime?   @db.Timestamptz(3)
+  clickedAt     DateTime?   @db.Timestamptz(3)
+  platform      String      @default("google")
+  createdAt     DateTime    @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime    @updatedAt @db.Timestamptz(3)
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  @@index([sentAt])
+}
+
+model DataRequest {
+  id             String            @id @default(cuid())
+  customerId     String
+  type           DataRequestType
+  status         DataRequestStatus @default(pending)
+  requestedBy    String?
+  completedAt    DateTime?         @db.Timestamptz(3)
+  resultLocation String?
+  error          String?
+  createdAt      DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime          @updatedAt @db.Timestamptz(3)
+  customer       Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId, status])
+  @@index([status, createdAt])
 }

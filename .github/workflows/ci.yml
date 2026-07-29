@@ -6,9 +6,17 @@ on:
   pull_request:
     branches: [master]
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:16
@@ -27,15 +35,20 @@ jobs:
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/hair_simo
       JWT_SECRET: ci-test-secret-min-32-chars-long
+      SEED_ADMIN_PASSWORD: ci-seed-password-min-12-chars
+      ADMIN_OWNER_EMAIL: simona@hairsimo.it
       PAYMENTS_MOCK_ENABLED: "true"
       NEXT_PUBLIC_BASE_URL: http://localhost:3000
+      NEXT_TELEMETRY_DISABLED: "1"
+      TURBO_TELEMETRY_DISABLED: "1"
 
     steps:
       - uses: actions/checkout@v4
 
+      # No `version:` input on purpose — pnpm/action-setup@v4 reads the pinned
+      # version from the root package.json `packageManager` field and errors out
+      # if both are given and disagree.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
 
       - uses: actions/setup-node@v4
         with:
@@ -45,8 +58,17 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Setup database
-        run: pnpm db:setup
+      # `pnpm db:setup` is the local-dev entrypoint: it boots Postgres via docker
+      # compose, which collides with the service container above. In CI the database
+      # is already running, so drive Prisma directly.
+      - name: Generate Prisma client
+        run: pnpm db:generate
+
+      - name: Apply database schema
+        run: pnpm db:push
+
+      - name: Seed database
+        run: pnpm db:seed
 
       - name: Lint
         run: pnpm lint

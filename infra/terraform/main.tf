@@ -6,6 +6,17 @@ terraform {
       version = "~> 6.0"
     }
   }
+
+  # Remote state lives in GCS. A backend block cannot use variables, so the bucket
+  # name is hardcoded and must stay in sync with google_storage_bucket.terraform_state
+  # below. Bootstrap order (one time only, see README.md "Remote state"):
+  #   1. terraform apply            -> creates the bucket with local state
+  #   2. uncomment the block below
+  #   3. terraform init -migrate-state
+  # backend "gcs" {
+  #   bucket = "hair-simo-tfstate-683522826150"
+  #   prefix = "hair-simo/production"
+  # }
 }
 
 provider "google" {
@@ -22,5 +33,46 @@ locals {
     app         = "hair-simo"
     environment = var.environment
     managed_by  = "terraform"
+  }
+
+  lb_domains = distinct(compact([var.web_domain, var.admin_domain]))
+
+  pubsub_service_agent = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-pubsub.iam.gserviceaccount.com"
+
+  # Google preconfigured OWASP CRS rule sets, evaluated after the rate limit rule.
+  owasp_rules = {
+    "sqli-v33-stable"             = 1100
+    "xss-v33-stable"              = 1200
+    "lfi-v33-stable"              = 1300
+    "rce-v33-stable"              = 1400
+    "scannerdetection-v33-stable" = 1500
+  }
+}
+
+resource "google_storage_bucket" "terraform_state" {
+  name                        = "hair-simo-tfstate-683522826150"
+  location                    = "EU"
+  storage_class               = "STANDARD"
+  force_destroy               = false
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+  labels                      = local.labels
+
+  versioning {
+    enabled = true
+  }
+
+  lifecycle_rule {
+    condition {
+      num_newer_versions = 10
+      with_state         = "ARCHIVED"
+    }
+    action {
+      type = "Delete"
+    }
+  }
+
+  lifecycle {
+    prevent_destroy = true
   }
 }
