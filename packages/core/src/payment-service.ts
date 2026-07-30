@@ -4,8 +4,10 @@ import { prisma } from "@hair-simo/db";
 import type { AppointmentStatus, Payment } from "@hair-simo/db";
 import { BookingService } from "./booking-service";
 import { buildPricing, type PricingResult } from "./pricing-service";
+import { VoucherService } from "./voucher-service";
 
 const bookingService = new BookingService();
+const voucherService = new VoucherService();
 
 export const PAYMENT_PROVIDER = "google-pay";
 export const PAYMENT_CURRENCY = "EUR";
@@ -179,6 +181,7 @@ const checkoutSchema = z.object({
   mode: z.enum(["deposit", "full"]).default("deposit"),
   tipCents: z.number().int().min(0).max(MAX_TIP_CENTS).default(0),
   customerEmail: z.string().email().optional(),
+  voucherCode: z.string().trim().min(1).max(64).optional(),
 });
 
 const confirmSchema = z
@@ -289,9 +292,48 @@ export class PaymentService {
       };
     }
 
+    let chargeBaseCents = baseAmountCents;
+    let chargeTipCents = input.tipCents;
+
+    if (input.voucherCode) {
+      const balance = await voucherService.balance(input.voucherCode);
+      const redeemAmount = Math.min(balance.remainingCents, chargeBaseCents + chargeTipCents);
+      if (redeemAmount > 0) {
+        await voucherService.redeem(input.voucherCode, redeemAmount, {
+          appointmentId: appointment.id,
+          currency: PAYMENT_CURRENCY,
+        });
+        let remaining = redeemAmount;
+        const fromBase = Math.min(remaining, chargeBaseCents);
+        chargeBaseCents -= fromBase;
+        remaining -= fromBase;
+        chargeTipCents = Math.max(0, chargeTipCents - remaining);
+      }
+    }
+
+    const totalChargeCents = chargeBaseCents + chargeTipCents;
+
+    if (totalChargeCents <= 0) {
+      if (appointment.status !== "confirmed") {
+        await bookingService.confirm(appointment.id, "voucher payment");
+      }
+      return {
+        provider: PAYMENT_PROVIDER,
+        paymentId: null,
+        paymentRequired: false,
+        depositRequired: pricing.depositRequired,
+        amountCents: 0,
+        tipCents: 0,
+        totalChargeCents: 0,
+        currency: PAYMENT_CURRENCY,
+        mode: input.mode,
+        providerConfigured: false,
+        pricing: pricingSummary,
+        googlePayRequest: null,
+      };
+    }
+
     const config = resolveGooglePayConfig();
-    const tipCents = input.tipCents;
-    const totalChargeCents = baseAmountCents + tipCents;
 
     const pending = await prisma.payment.findFirst({
       where: { appointmentId: appointment.id, status: "pending" },
@@ -303,8 +345,8 @@ export class PaymentService {
           where: { id: pending.id },
           data: {
             provider: PAYMENT_PROVIDER,
-            amountCents: baseAmountCents,
-            tipCents,
+            amountCents: chargeBaseCents,
+            tipCents: chargeTipCents,
             currency: PAYMENT_CURRENCY,
             mode: input.mode,
           },
@@ -314,8 +356,8 @@ export class PaymentService {
             appointmentId: appointment.id,
             provider: PAYMENT_PROVIDER,
             providerIntentId: `gpay_${randomUUID()}`,
-            amountCents: baseAmountCents,
-            tipCents,
+            amountCents: chargeBaseCents,
+            tipCents: chargeTipCents,
             currency: PAYMENT_CURRENCY,
             mode: input.mode,
             status: "pending",
@@ -327,8 +369,8 @@ export class PaymentService {
       paymentId: payment.id,
       paymentRequired: true,
       depositRequired: pricing.depositRequired,
-      amountCents: baseAmountCents,
-      tipCents,
+      amountCents: chargeBaseCents,
+      tipCents: chargeTipCents,
       totalChargeCents,
       currency: PAYMENT_CURRENCY,
       mode: input.mode,

@@ -1,5 +1,7 @@
-import { aiRequestSchema, runAssistant } from "@hair-simo/ai";
+import { randomBytes } from "node:crypto";
+import { aiRequestSchema, detectLocaleFromInput, runAssistant } from "@hair-simo/ai";
 import { salonRepository } from "@hair-simo/core";
+import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createAiTools } from "../../../../lib/ai-tools";
 import { apiRoute } from "../../../../lib/api-handler";
@@ -9,11 +11,20 @@ import { MAX_CHAT_TEXT_LENGTH } from "../../_lib/chat-channel";
 const CHAT_WEB_BODY_LIMIT_BYTES = 16_384;
 const MAX_HISTORY_TURNS = 10;
 
+/**
+ * The multi-turn booking draft holds a name, an e-mail and a quoted price, so it must not
+ * be keyed on the client address alone: a household or a hotel behind one NAT would share
+ * one draft. This opaque, server-issued id is combined with the resolved address, so
+ * reaching another person's draft needs both their cookie and their network position.
+ */
+const CHAT_SESSION_COOKIE = "hs_chat";
+const CHAT_SESSION_PATTERN = /^[a-f0-9]{32}$/;
+const CHAT_SESSION_MAX_AGE_SECONDS = 1_800;
+
 const chatWebSchema = aiRequestSchema.extend({
   text: z.string().trim().min(1).max(MAX_CHAT_TEXT_LENGTH),
   customerId: z.string().trim().min(1).max(64).optional(),
   serviceId: z.string().trim().min(1).max(100).optional(),
-  appointmentId: z.string().trim().min(1).max(64).optional(),
   conversationHistory: z
     .array(
       z.object({
@@ -41,7 +52,8 @@ const localized: Record<string, Record<string, string>> = {
     products: "Produkte",
     services: "Leistungen",
     servicesIntro: "Hier sind unsere beliebtesten Leistungen:",
-    askService: "Wenn du willst, nenne ich dir passende Optionen fuer deine Haarlaenge und dein Ziel.",
+    askService:
+      "Wenn du willst, nenne ich dir passende Optionen fuer deine Haarlaenge und dein Ziel.",
     showPrices: "Preise anzeigen",
   },
   it: {
@@ -65,7 +77,8 @@ const localized: Record<string, Record<string, string>> = {
     products: "Produits",
     services: "Services",
     servicesIntro: "Voici nos prestations les plus demandees :",
-    askService: "Si vous voulez, je peux proposer les meilleures options selon votre longueur et objectif.",
+    askService:
+      "Si vous voulez, je peux proposer les meilleures options selon votre longueur et objectif.",
     showPrices: "Voir tarifs",
   },
   en: {
@@ -132,7 +145,11 @@ async function buildServiceSuggestion(locale: string) {
   const top = services.slice(0, 5);
   const names = top.map((service) => {
     const translated = service.translations.find((entry) => entry.locale === locale)?.name;
-    return translated ?? service.translations.find((entry) => entry.locale === "de")?.name ?? service.slug;
+    return (
+      translated ??
+      service.translations.find((entry) => entry.locale === "de")?.name ??
+      service.slug
+    );
   });
   return `${L(locale).servicesIntro}\n- ${names.join("\n- ")}\n\n${L(locale).askService}`;
 }
@@ -145,8 +162,23 @@ export const POST = apiRoute<z.infer<typeof chatWebSchema>>(
     bodyLimitBytes: CHAT_WEB_BODY_LIMIT_BYTES,
     schema: chatWebSchema,
   },
-  async ({ body, clientIp }) => {
-    const result = await runAssistant(body, createAiTools(body.locale));
+  async ({ req, body, clientIp, log }) => {
+    const cookieValue = req.cookies.get(CHAT_SESSION_COOKIE)?.value ?? "";
+    const chatSessionId = CHAT_SESSION_PATTERN.test(cookieValue)
+      ? cookieValue
+      : randomBytes(16).toString("hex");
+    const toolLocale = body.locale ?? detectLocaleFromInput(body.text);
+
+    const result = await runAssistant(
+      body,
+      createAiTools({
+        locale: toolLocale,
+        channel: "web",
+        conversationId: `web:${clientIp.key}:${chatSessionId}`,
+        accessToken: body.accessToken,
+        log: (message, fields) => log.info(message, fields),
+      }),
+    );
     const locale = body.locale ?? result.locale;
     const serviceQuestion =
       /leistung|service|services|angebot|menu|prestation|servizi|servizio/i.test(
@@ -182,6 +214,18 @@ export const POST = apiRoute<z.infer<typeof chatWebSchema>>(
       externalRef,
     });
 
-    return { data: { ...result, response: responseText, actions: fallbackActions } };
+    const response = NextResponse.json({
+      data: { ...result, response: responseText, actions: fallbackActions },
+    });
+    response.cookies.set({
+      name: CHAT_SESSION_COOKIE,
+      value: chatSessionId,
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: CHAT_SESSION_MAX_AGE_SECONDS,
+    });
+    return response;
   },
 );

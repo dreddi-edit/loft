@@ -9,14 +9,16 @@ import {
   formatSalonTime,
   toDateTimeLocalValue,
 } from "../lib/admin-datetime";
+import { adminT } from "../lib/admin-messages";
 import { AppointmentActions } from "./AppointmentActions";
+import { CustomerHistoryPanel } from "./CustomerHistoryPanel";
 
 type Appointment = {
   id: string;
   status: string;
   startsAt: string | Date;
   endsAt: string | Date;
-  customer: { firstName: string; lastName: string; email: string | null; phone: string | null };
+  customer: { id: string; firstName: string; lastName: string; email: string | null; phone: string | null };
   service: { slug: string };
   staff: { id: string; displayName: string } | null;
   payments?: Array<{ status: string; amountCents: number }>;
@@ -46,6 +48,7 @@ export function AppointmentWorkspace({
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("all");
   const [showCreate, setShowCreate] = useState(params.get("new") === "1");
+  const [historyAppointment, setHistoryAppointment] = useState<Appointment | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [form, setForm] = useState({
@@ -166,7 +169,16 @@ export function AppointmentWorkspace({
                   )}
                 </td>
                 <td><span className={`admin-status ${appointment.status}`}>{appointment.status.replace("_", " ")}</span></td>
-                <td><AppointmentActions appointment={appointment} /></td>
+                <td>
+                  <button
+                    className="admin-button secondary"
+                    type="button"
+                    onClick={() => setHistoryAppointment(appointment)}
+                  >
+                    {adminT(locale, "history_open_button")}
+                  </button>
+                  <AppointmentActions appointment={appointment} />
+                </td>
               </tr>
             ))}
           </tbody>
@@ -263,6 +275,27 @@ export function AppointmentWorkspace({
                 {busy ? "Creating…" : "Create appointment"}
               </button>
             </form>
+          </section>
+        </div>
+      ) : null}
+
+      {historyAppointment ? (
+        <div className="admin-modal-backdrop" role="presentation" onMouseDown={() => setHistoryAppointment(null)}>
+          <section className="admin-drawer" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="admin-drawer-header">
+              <div>
+                <span className="admin-kicker">
+                  {historyAppointment.customer.firstName} {historyAppointment.customer.lastName}
+                </span>
+                <h2>{adminT(locale, "history_title")}</h2>
+              </div>
+              <button type="button" onClick={() => setHistoryAppointment(null)} aria-label="Close">×</button>
+            </div>
+            <CustomerHistoryPanel
+              customerId={historyAppointment.customer.id}
+              appointmentId={historyAppointment.id}
+              locale={locale}
+            />
           </section>
         </div>
       ) : null}

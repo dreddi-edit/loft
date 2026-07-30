@@ -284,7 +284,8 @@ resource "google_cloud_run_v2_service" "web" {
   name     = "hair-simo-web"
   location = var.region
   labels   = local.labels
-  ingress  = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
+  # Without a load balancer, INTERNAL_LOAD_BALANCER makes the run.app URL return 404.
+  ingress  = var.enable_load_balancer ? "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER" : "INGRESS_TRAFFIC_ALL"
 
   template {
     service_account = google_service_account.run.email
@@ -455,6 +456,12 @@ resource "google_cloud_run_v2_service" "web" {
     percent = 100
   }
 
+  # API returns a default top-level scaling block and gcloud stamps client metadata;
+  # neither is managed in this config. Ignoring stops perpetual plan noise.
+  lifecycle {
+    ignore_changes = [client, client_version, scaling]
+  }
+
   depends_on = [google_artifact_registry_repository.hair_simo]
 }
 
@@ -462,7 +469,7 @@ resource "google_cloud_run_v2_service" "admin" {
   name     = "hair-simo-admin"
   location = var.region
   labels   = local.labels
-  ingress  = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
+  ingress  = var.enable_load_balancer ? "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER" : "INGRESS_TRAFFIC_ALL"
 
   template {
     service_account = google_service_account.run.email
@@ -573,11 +580,16 @@ resource "google_cloud_run_v2_service" "admin" {
     type    = "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST"
     percent = 100
   }
+
+  lifecycle {
+    ignore_changes = [client, client_version, scaling]
+  }
 }
 
 # Serverless NEGs do not authenticate to Cloud Run, so the load balancer can only
-# reach these services when they are invokable by allUsers. The actual perimeter is
-# ingress = INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER plus the Cloud Armor policies.
+# reach these services when they are invokable by allUsers. The perimeter when the
+# LB is enabled is ingress = INTERNAL_LOAD_BALANCER plus Cloud Armor; without an LB,
+# ingress is ALL and Armor is not in the path.
 resource "google_cloud_run_v2_service_iam_member" "web_public" {
   project  = var.project_id
   location = google_cloud_run_v2_service.web.location
@@ -1041,6 +1053,75 @@ resource "google_cloud_scheduler_job" "reminders" {
   }
 
   depends_on = [google_cloud_run_v2_service_iam_member.web_scheduler]
+}
+
+resource "google_cloud_scheduler_job" "sweep" {
+  name             = "hair-simo-maintenance-sweep"
+  description      = "Hourly maintenance: unverified bookings, waitlist, reviews, retention"
+  region           = var.region
+  schedule         = "15 * * * *"
+  time_zone        = "Europe/Rome"
+  attempt_deadline = "320s"
+
+  retry_config {
+    retry_count          = 3
+    min_backoff_duration = "10s"
+    max_backoff_duration = "300s"
+    max_doublings        = 3
+  }
+
+  http_target {
+    http_method = "POST"
+    uri         = "https://${var.web_domain}/api/cron/sweep"
+    headers = {
+      "Content-Type"  = "application/json"
+      "X-Cron-Secret" = var.cron_secret
+    }
+    body = base64encode(jsonencode({ limit = 200 }))
+
+    oidc_token {
+      service_account_email = google_service_account.scheduler.email
+      audience              = "https://${var.web_domain}/api/cron/sweep"
+    }
+  }
+
+  depends_on = [google_cloud_run_v2_service_iam_member.web_scheduler]
+}
+
+resource "google_pubsub_subscription" "notifications_push" {
+  name  = "hair-simo-${var.environment}-notifications-push"
+  topic = google_pubsub_topic.notifications.name
+
+  ack_deadline_seconds       = 60
+  labels                     = local.labels
+  message_retention_duration = "604800s"
+
+  expiration_policy {
+    ttl = ""
+  }
+
+  push_config {
+    push_endpoint = "https://${var.web_domain}/api/tasks/pubsub"
+    oidc_token {
+      service_account_email = google_service_account.scheduler.email
+      audience              = "https://${var.web_domain}/api/tasks/pubsub"
+    }
+  }
+
+  retry_policy {
+    minimum_backoff = "10s"
+    maximum_backoff = "600s"
+  }
+
+  dead_letter_policy {
+    dead_letter_topic     = google_pubsub_topic.notifications_dead_letter.id
+    max_delivery_attempts = 10
+  }
+
+  depends_on = [
+    google_pubsub_topic_iam_member.dead_letter_publisher,
+    google_cloud_run_v2_service_iam_member.web_scheduler,
+  ]
 }
 
 resource "google_monitoring_notification_channel" "email" {

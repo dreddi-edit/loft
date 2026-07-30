@@ -1,4 +1,4 @@
-import { prisma } from "@hair-simo/db";
+import { prisma, tenantEmailKey, tenantSlugKey } from "@hair-simo/db";
 import type {
   AppointmentStatus,
   Channel,
@@ -187,7 +187,7 @@ export const salonRepository = {
 
   findServiceBySlug: (slug: string) =>
     prisma.service.findUnique({
-      where: { slug },
+      where: tenantSlugKey(slug),
       include: { translations: true },
     }),
 
@@ -562,7 +562,7 @@ export const salonRepository = {
       });
     };
 
-    const existing = await prisma.customer.findUnique({ where: { email } });
+    const existing = await prisma.customer.findUnique({ where: tenantEmailKey(email) });
     if (existing) return reuse(existing);
 
     try {
@@ -578,7 +578,7 @@ export const salonRepository = {
       });
     } catch (error) {
       if ((error as { code?: unknown }).code !== "P2002") throw error;
-      const raced = await prisma.customer.findUnique({ where: { email } });
+      const raced = await prisma.customer.findUnique({ where: tenantEmailKey(email) });
       if (!raced) throw error;
       return reuse(raced);
     }
@@ -649,6 +649,8 @@ export const salonRepository = {
     blockedEndsAt: Date;
     locale: string;
     sourceChannel: Channel;
+    depositRequired?: boolean;
+    noShowFeeCents?: number;
   }) =>
     withSerializationRetry(() =>
       prisma.$transaction(async (tx) => {
@@ -674,6 +676,8 @@ export const salonRepository = {
             endsAt: input.endsAt,
             locale: input.locale,
             sourceChannel: input.sourceChannel,
+            depositRequired: input.depositRequired,
+            noShowFeeCents: input.noShowFeeCents,
             statusHistory: { create: { status: "pending", reason: "initial booking" } },
           },
           include: { customer: true, service: true, staff: true },

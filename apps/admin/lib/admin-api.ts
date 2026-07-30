@@ -2,10 +2,14 @@ import { randomUUID } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import type { AuthSession } from "@hair-simo/core";
 import { salonRepository } from "@hair-simo/core";
-import { prisma, type RoleKey } from "@hair-simo/db";
+import { prisma, runWithTenantAsync, type RoleKey } from "@hair-simo/db";
 import { ZodError, z, type ZodType } from "zod";
 import { requireSession } from "./auth";
 import { extractClientIp } from "./login-throttle";
+
+function tenantContextFromSession(session: AuthSession) {
+  return { tenantId: session.tenantId, slug: session.tenantSlug };
+}
 
 export const REQUEST_ID_HEADER = "x-request-id";
 export const DEFAULT_BODY_LIMIT_BYTES = 65_536;
@@ -105,6 +109,9 @@ const ERROR_CODE_ALIASES: Record<string, ErrorCode> = {
   STAFF_NOT_ELIGIBLE: "STAFF_NOT_ELIGIBLE",
   STAFF_NOT_FOUND: "NOT_FOUND",
   CUSTOMER_NOT_FOUND: "NOT_FOUND",
+  NOTE_NOT_FOUND: "NOT_FOUND",
+  ALLERGY_NOTE_MUST_STAY_PINNED: "CONFLICT",
+  ALLERGY_NOTE_DELETE_NOT_CONFIRMED: "CONFLICT",
   PRODUCT_NOT_FOUND: "NOT_FOUND",
   TIME_OFF_NOT_FOUND: "NOT_FOUND",
   APPOINTMENT_NOT_FOUND: "APPOINTMENT_NOT_FOUND",
@@ -785,12 +792,13 @@ export function adminRoute<
       }
 
       session = await requireSession(request, config.roles as RoleKey[]);
+      const resolvedSession = session;
 
-      const actorLimit = enforceAdminRateLimit(policy, `user:${session.userId}`);
+      const actorLimit = enforceAdminRateLimit(policy, `user:${resolvedSession.userId}`);
       rateLimit = actorLimit;
       if (!actorLimit.allowed) {
         throw new HttpError("RATE_LIMITED", {
-          logMessage: `${policy} exceeded for user ${session.userId}`,
+          logMessage: `${policy} exceeded for user ${resolvedSession.userId}`,
         });
       }
 
@@ -833,18 +841,20 @@ export function adminRoute<
         },
       };
 
-      const result = await handler({
-        req: request,
-        body,
-        query,
-        params,
-        searchParams,
-        session,
-        requestId,
-        clientIp,
-        audit,
-        log,
-      });
+      const result = await runWithTenantAsync(tenantContextFromSession(resolvedSession), async () =>
+        handler({
+          req: request,
+          body,
+          query,
+          params,
+          searchParams,
+          session: resolvedSession,
+          requestId,
+          clientIp,
+          audit,
+          log,
+        }),
+      );
 
       const response = toResponse(result, config.successStatus ?? 200);
 

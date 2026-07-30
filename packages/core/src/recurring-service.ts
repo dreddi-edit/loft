@@ -83,6 +83,12 @@ export type OccurrenceStatus =
   | "skipped_past"
   | "series_completed";
 
+/**
+ * One series blew up — a lost connection, a serialization conflict that outlived its
+ * retries. The run carries on with the other series and reports this one for a human.
+ */
+export const SERIES_MATERIALISATION_FAILED = "SERIES_MATERIALISATION_FAILED";
+
 export type OccurrenceOutcome = {
   seriesId: string;
   customerId: string;
@@ -98,6 +104,8 @@ export type OccurrenceOutcome = {
   /** Signed wall-clock minutes between the ideal slot and the booked one. */
   offsetMinutes?: number;
   reason?: string;
+  /** Only set alongside `SERIES_MATERIALISATION_FAILED`: what actually went wrong. */
+  error?: string;
 };
 
 export type MaterialiseReport = {
@@ -166,9 +174,11 @@ const createSeriesSchema = z
     channel: z.enum(["web", "whatsapp", "sms", "voice"]).default("web"),
   })
   .strict()
-  .refine((value) => value.endsAt === undefined || value.occurrences === undefined, {
-    message: "Pass either endsAt or occurrences, not both.",
-  });
+  .refine(
+    (value) =>
+      value.endsAt === undefined || value.endsAt === null || value.occurrences === undefined,
+    { message: "Pass either endsAt or occurrences, not both." },
+  );
 
 export type CreateSeriesInput = z.input<typeof createSeriesSchema>;
 
@@ -480,6 +490,11 @@ export class RecurringService {
    * belt-and-braces check looks for a live appointment already carrying this `seriesId` on
    * this salon day, which also covers the case where a member of staff reset `nextAt` by
    * hand after the occurrence was booked.
+   *
+   * Each series is isolated: a lost connection on one of them is reported as
+   * `SERIES_MATERIALISATION_FAILED` and the run continues. A cron that abandons two
+   * hundred standing customers because the third one hit a deadlock is worse than useless,
+   * and the caller would lose the report for the ones already written.
    */
   async materialiseDue(now = new Date(), horizon?: Date): Promise<MaterialiseReport> {
     const effectiveHorizon =
@@ -515,76 +530,91 @@ export class RecurringService {
     spanMinutes: number,
   ): Promise<OccurrenceOutcome[]> {
     const outcomes: OccurrenceOutcome[] = [];
-
-    if (series.customer.deletedAt || series.customer.anonymizedAt) {
-      await this.deactivate(series.id);
-      return [
-        outcomeFor(series, series.nextAt, "series_completed", { reason: "CUSTOMER_UNAVAILABLE" }),
-      ];
-    }
-    if (!series.service.isActive) {
-      return [outcomeFor(series, series.nextAt, "needs_attention", { reason: "SERVICE_INACTIVE" })];
-    }
-
-    const staffIds = await this.eligibleStaffIds(series.serviceId, series.staffId);
-    const preferredStaffId = series.staffId ?? (await this.previousStaffId(series.id));
-    const earliest = new Date(now.getTime() + SERIES_LEAD_MINUTES * MS_PER_MINUTE);
-
     let cursor = series.nextAt;
-    for (let step = 0; step < MAX_OCCURRENCES_PER_RUN; step += 1) {
-      if (cursor >= horizon) break;
-      if (series.endsAt && cursor > series.endsAt) {
+
+    try {
+      if (series.customer.deletedAt || series.customer.anonymizedAt) {
         await this.deactivate(series.id);
-        outcomes.push(
-          outcomeFor(series, cursor, "series_completed", { reason: "SERIES_END_REACHED" }),
-        );
-        break;
+        return [
+          outcomeFor(series, series.nextAt, "series_completed", { reason: "CUSTOMER_UNAVAILABLE" }),
+        ];
+      }
+      if (!series.service.isActive) {
+        return [
+          outcomeFor(series, series.nextAt, "needs_attention", { reason: "SERVICE_INACTIVE" }),
+        ];
       }
 
-      const advanceTo = addSalonWeeks(cursor, series.intervalWeeks);
+      const staffIds = await this.eligibleStaffIds(series.serviceId, series.staffId);
+      const preferredStaffId = series.staffId ?? (await this.previousStaffId(series.id));
+      const earliest = new Date(now.getTime() + SERIES_LEAD_MINUTES * MS_PER_MINUTE);
 
-      if (cursor < earliest) {
-        const committed = await this.commit(series, cursor, advanceTo, null, spanMinutes);
+      for (let step = 0; step < MAX_OCCURRENCES_PER_RUN; step += 1) {
+        if (cursor >= horizon) break;
+        if (series.endsAt && cursor > series.endsAt) {
+          await this.deactivate(series.id);
+          outcomes.push(
+            outcomeFor(series, cursor, "series_completed", { reason: "SERIES_END_REACHED" }),
+          );
+          break;
+        }
+
+        const advanceTo = addSalonWeeks(cursor, series.intervalWeeks);
+
+        if (cursor < earliest) {
+          const committed = await this.commit(series, cursor, advanceTo, null, spanMinutes);
+          if (committed.kind === "raced") break;
+          outcomes.push(
+            outcomeFor(series, cursor, "skipped_past", { reason: "OCCURRENCE_IN_PAST" }),
+          );
+          cursor = advanceTo;
+          continue;
+        }
+
+        const chosen =
+          staffIds.length === 0
+            ? null
+            : await this.planSlot(series, cursor, staffIds, preferredStaffId, spanMinutes);
+        const committed = await this.commit(series, cursor, advanceTo, chosen, spanMinutes);
+
         if (committed.kind === "raced") break;
-        outcomes.push(outcomeFor(series, cursor, "skipped_past", { reason: "OCCURRENCE_IN_PAST" }));
+        if (committed.kind === "duplicate") {
+          outcomes.push(
+            outcomeFor(series, cursor, "already_booked", {
+              appointmentId: committed.appointmentId,
+            }),
+          );
+        } else if (committed.kind === "created" && chosen) {
+          outcomes.push(
+            outcomeFor(series, cursor, chosen.offsetMinutes === 0 ? "booked" : "moved", {
+              appointmentId: committed.appointmentId,
+              staffId: chosen.staffId,
+              startsAt: chosen.startsAt,
+              endsAt: chosen.endsAt,
+              offsetMinutes: chosen.offsetMinutes,
+            }),
+          );
+        } else {
+          outcomes.push(
+            outcomeFor(series, cursor, "needs_attention", {
+              reason:
+                staffIds.length === 0
+                  ? "STAFF_NOT_ELIGIBLE"
+                  : committed.kind === "conflict"
+                    ? "SLOT_TAKEN_WHILE_BOOKING"
+                    : "NO_SLOT_WITHIN_TOLERANCE",
+            }),
+          );
+        }
         cursor = advanceTo;
-        continue;
       }
-
-      const chosen =
-        staffIds.length === 0
-          ? null
-          : await this.planSlot(series, cursor, staffIds, preferredStaffId, spanMinutes);
-      const committed = await this.commit(series, cursor, advanceTo, chosen, spanMinutes);
-
-      if (committed.kind === "raced") break;
-      if (committed.kind === "duplicate") {
-        outcomes.push(
-          outcomeFor(series, cursor, "already_booked", { appointmentId: committed.appointmentId }),
-        );
-      } else if (committed.kind === "created" && chosen) {
-        outcomes.push(
-          outcomeFor(series, cursor, chosen.offsetMinutes === 0 ? "booked" : "moved", {
-            appointmentId: committed.appointmentId,
-            staffId: chosen.staffId,
-            startsAt: chosen.startsAt,
-            endsAt: chosen.endsAt,
-            offsetMinutes: chosen.offsetMinutes,
-          }),
-        );
-      } else {
-        outcomes.push(
-          outcomeFor(series, cursor, "needs_attention", {
-            reason:
-              staffIds.length === 0
-                ? "STAFF_NOT_ELIGIBLE"
-                : committed.kind === "conflict"
-                  ? "SLOT_TAKEN_WHILE_BOOKING"
-                  : "NO_SLOT_WITHIN_TOLERANCE",
-          }),
-        );
-      }
-      cursor = advanceTo;
+    } catch (error) {
+      outcomes.push(
+        outcomeFor(series, cursor, "needs_attention", {
+          reason: SERIES_MATERIALISATION_FAILED,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
     }
 
     return outcomes;
@@ -755,6 +785,8 @@ export class RecurringService {
 
   /** Stop generating without losing the cadence; `nextAt` is left exactly where it is. */
   async pause(seriesId: string): Promise<SeriesActionResult> {
+    const existing = await prisma.recurringSeries.findUnique({ where: { id: seriesId } });
+    if (!existing) throw new Error("SERIES_NOT_FOUND");
     const series = await prisma.recurringSeries.update({
       where: { id: seriesId },
       data: { active: false },

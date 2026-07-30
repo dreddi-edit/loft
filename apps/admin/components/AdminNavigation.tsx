@@ -22,6 +22,9 @@ const groups = [
       ["staff", "Team", "06"],
       ["rules", "Rules", "07"],
       ["products", "Products", "08"],
+      ["waitlist", "Waitlist", "12"],
+      ["vouchers", "Vouchers", "13"],
+      ["recurring", "Recurring", "14"],
     ],
   },
   {
@@ -30,6 +33,9 @@ const groups = [
       ["reports", "Reports", "09"],
       ["call-logs", "Calls", "10"],
       ["notifications", "Notifications", "11"],
+      ["reviews", "Reviews", "15"],
+      ["gdpr", "GDPR", "16"],
+      ["audit-log", "Audit log", "17"],
     ],
   },
 ] as const;
@@ -59,9 +65,15 @@ export function AdminNavigation({ locale }: { locale: AppLocale }) {
               slug === "staff" ? adminT(locale, "staff") :
               slug === "rules" ? adminT(locale, "rules") :
               slug === "products" ? adminT(locale, "products") :
+              slug === "waitlist" ? "Waitlist" :
+              slug === "vouchers" ? "Vouchers" :
+              slug === "recurring" ? "Recurring" :
               slug === "reports" ? adminT(locale, "reports") :
               slug === "call-logs" ? adminT(locale, "call_logs") :
               slug === "notifications" ? adminT(locale, "notifications") :
+              slug === "reviews" ? "Reviews" :
+              slug === "gdpr" ? "GDPR" :
+              slug === "audit-log" ? "Audit log" :
               label;
             return (
               <Link key={slug} href={`/${slug}`} className={active ? "active" : undefined}>

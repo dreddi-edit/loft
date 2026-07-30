@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import type { ZodError, ZodType } from "zod";
+import { resolveTenantContext } from "@hair-simo/core";
+import { runWithTenantAsync } from "@hair-simo/db";
 import { HttpError, serializeError, validationErrorFromZod } from "./api-errors";
 import { resolveClientIp, type ClientIpResult } from "./client-ip";
 import {
@@ -332,12 +334,13 @@ export function apiRoute<
         });
       }
 
-      clientIp = resolveClientIp(request.headers);
+      const resolvedClientIp = resolveClientIp(request.headers);
+      clientIp = resolvedClientIp;
 
       if (config.policy) {
         const identifier = config.rateLimitKey
-          ? config.rateLimitKey({ req: request, clientIp, requestId })
-          : clientIp.key;
+          ? config.rateLimitKey({ req: request, clientIp: resolvedClientIp, requestId })
+          : resolvedClientIp.key;
         rateLimit = await enforceRateLimit(config.policy, identifier);
         if (!rateLimit.allowed) {
           throw new HttpError("RATE_LIMITED", {
@@ -361,18 +364,33 @@ export function apiRoute<
       if (config.sharedSecret) verifySharedSecret(config.sharedSecret, request.headers);
 
       const params = await routeContext.params;
-      const result = await handler({
-        req: request,
-        body,
-        query,
-        params,
-        ctx: routeContext,
-        searchParams,
-        requestId,
-        clientIp,
-        rateLimit,
-        log,
+      const tenant = await resolveTenantContext({
+        headerSlug: request.headers.get("x-tenant-slug"),
+        host: request.headers.get("host") ?? request.nextUrl.host,
+      }).catch((error: unknown) => {
+        if (error instanceof Error && error.message === "TENANT_NOT_FOUND") {
+          throw new HttpError("NOT_FOUND", {
+            message: "This salon could not be found.",
+            logMessage: "tenant slug did not resolve",
+          });
+        }
+        throw error;
       });
+
+      const result = await runWithTenantAsync(tenant, async () =>
+        handler({
+          req: request,
+          body,
+          query,
+          params,
+          ctx: routeContext,
+          searchParams,
+          requestId,
+          clientIp: resolvedClientIp,
+          rateLimit,
+          log,
+        }),
+      );
 
       const response = toResponse(result, config.successStatus ?? 200);
       return finish(response, response.status);

@@ -35,7 +35,15 @@ export const POST = apiRoute<z.infer<typeof taskSchema>>(
     }
 
     const payload = notificationTaskSchema.parse(body.data);
-    const delivery = await notificationService.send(payload);
+    const delivery = await notificationService.deliverPubSubEvent({
+      channel: payload.channel === "whatsapp" ? "whatsapp" : payload.channel === "sms" || payload.channel === "voice" ? "sms" : "email",
+      recipient: payload.recipient,
+      locale: payload.locale,
+      payload: {
+        subject: payload.subject ?? "Hair Simo",
+        message: payload.message,
+      },
+    });
     return { ok: true, handled: true, status: delivery.status };
   },
 );

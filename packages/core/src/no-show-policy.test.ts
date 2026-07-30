@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { runWithTenant } from "@hair-simo/db";
 
 import {
   DEPOSIT_PERCENTAGE,
@@ -158,6 +159,22 @@ describe("environment overrides", () => {
     await expect(importWithEnv({ NO_SHOW_FEE_PERCENTAGE: "half" })).rejects.toThrow(
       /NO_SHOW_FEE_PERCENTAGE/,
     );
+  });
+});
+
+describe("tenant settings overrides", () => {
+  it("prefers Tenant.settings over env defaults when context is set", () => {
+    const decision = runWithTenant(
+      {
+        tenantId: "t1",
+        slug: "other",
+        settings: { noShowDepositThresholdCents: 9_000, noShowDepositPercentage: 40 },
+      },
+      () => evaluateNoShowPolicy({ servicePriceCents: 9_000 }),
+    );
+    expect(decision.depositRequired).toBe(true);
+    expect(decision.depositCents).toBe(3_600);
+    expect(decision.depositPercentage).toBe(40);
   });
 });
 

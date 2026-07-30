@@ -1,34 +1,47 @@
 # Hair Simo Platform
 
-Production-ready multilingual salon operating system on **100% Google Cloud Platform**.
+Production-ready multilingual salon operating system on **100% Google Cloud Platform**, for
+a real hair salon in Brixen / Bressanone, South Tyrol, Italy (`Europe/Rome`).
 
 ## Monorepo structure
 
-- `apps/web` — public website, booking wizard, GCP webhooks (Dialogflow, Gemini, Google Pay)
-- `apps/admin` — Identity Platform authenticated backoffice
-- `packages/core` — business services
-- `packages/db` — Prisma schema, migrations, seed
+- `apps/web` — public website, booking wizard, customer self-service (manage, verify,
+  waitlist, voucher balance, ICS calendar links), GCP webhooks (Dialogflow, Gemini, Google
+  Pay)
+- `apps/admin` — Identity Platform authenticated backoffice, with an audit log on every
+  mutation
+- `packages/core` — business services: booking, pricing, payments, refunds, reminders,
+  auth, plus nine feature domains — ICS calendar feeds, no-show policy, booking
+  verification (double opt-in), waitlist, GDPR export/erasure, customer history & colour
+  formulas, review requests, vouchers, recurring series — see `docs/architecture.md` for
+  which of them are wired up to a route today
+- `packages/db` — Prisma schema, migrations, seed (Cloud SQL for PostgreSQL 16)
 - `packages/ai` — Vertex AI Gemini assistant with function calling
-- `packages/gcp` — GCP client integrations (Vertex AI, STT/TTS, Identity Platform, Pub/Sub, Cloud Tasks)
+- `packages/gcp` — GCP client integrations (Vertex AI, STT/TTS, Identity Platform, Pub/Sub,
+  Cloud Tasks)
 - `packages/i18n` — locale dictionaries + templates (de/it/fr/en)
 - `packages/ui` — shared design system components
-- `infra/terraform` — Cloud Run, AlloyDB, Cloud Armor, Pub/Sub, Cloud Tasks
+- `infra/terraform` — Cloud Run, Cloud SQL, Cloud Armor, Pub/Sub, Cloud Tasks (`europe-west8`, Milan)
 - `docs` — architecture, API, operations, decisions
 
 ## GCP stack
 
 | Feature | Service |
 |---------|---------|
-| Hosting | Cloud Run |
-| Database | AlloyDB for PostgreSQL |
-| Chat AI | Vertex AI Gemini 2.5 Flash |
+| Hosting | Cloud Run (`europe-west8`, Milan) |
+| Database | Cloud SQL for PostgreSQL 16, private IP |
+| Chat AI | Vertex AI Gemini 2.5 Flash (`europe-west1`, Belgium) |
 | Voice | Dialogflow CX + Phone Gateway |
 | STT | Cloud Speech-to-Text (Chirp) |
 | TTS | Cloud Text-to-Speech (Chirp 3 HD) |
 | Auth | Identity Platform |
 | Notifications | Pub/Sub + Cloud Tasks + Gmail API |
 | Payments | Google Pay + PSP webhook |
-| Security | Cloud Armor + Secret Manager |
+| Security | Cloud Armor (Standard tier) + Secret Manager |
+
+See `docs/architecture.md` for why Vertex AI runs in a different region from everything
+else, and `docs/decisions.md` for why the region and the database engine both changed on
+2026-07-29.
 
 ## Requirements
 
@@ -96,10 +109,11 @@ docker build -f apps/admin/Dockerfile -t hair-simo-admin .
 
 ## Documentation
 
-- `docs/architecture.md` — system design and GCP mapping
-- `docs/api.md` — API reference
-- `docs/operations.md` — runbook
-- `docs/decisions.md` — technical decisions
+- `docs/architecture.md` — system design, GCP mapping, and what each new capability
+  actually does today
+- `docs/api.md` — API reference, enumerated from the filesystem with a date stamp
+- `docs/operations.md` — runbook, including the full environment-variable reconciliation
+- `docs/decisions.md` — technical decisions, including the ones taken after go-live
 - `docs/GO-LIVE.md` — **production checklist (keys + connect only)**
 - `docs/TERMINAL-AGENT-GUIDE.md` — **laptop + Cursor CLI + gcloud (ultra detailed)**
 - `infra/terraform/README.md` — infrastructure guide

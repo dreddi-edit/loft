@@ -1,9 +1,10 @@
 "use client";
 
 import { FormEvent, useMemo, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import type { AppLocale } from "@hair-simo/i18n";
 import { formatSalonDate } from "../lib/admin-datetime";
+import { CustomerHistoryPanel } from "./CustomerHistoryPanel";
 
 type Customer = {
   id: string;
@@ -19,13 +20,11 @@ type Customer = {
 };
 
 export function CustomerEditor({ customers, locale }: { customers: Customer[]; locale: AppLocale }) {
-  const router = useRouter();
   const params = useSearchParams();
   const [items, setItems] = useState(customers);
   const [query, setQuery] = useState(params.get("q") ?? "");
   const [selectedId, setSelectedId] = useState(customers[0]?.id ?? "");
   const [showCreate, setShowCreate] = useState(false);
-  const [note, setNote] = useState<Record<string, string>>({});
   const [message, setMessage] = useState<string | null>(null);
   const [createForm, setCreateForm] = useState({ firstName: "", lastName: "", email: "", phone: "" });
 
@@ -57,19 +56,6 @@ export function CustomerEditor({ customers, locale }: { customers: Customer[]; l
       setMessage("Customer updated");
     } else {
       setMessage(json.message ?? json.error ?? "Update failed");
-    }
-  }
-
-  async function addNote(customerId: string) {
-    const response = await fetch(`/api/customers/${customerId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ note: note[customerId] }),
-    });
-    if (response.ok) {
-      setMessage("Note added");
-      setNote((current) => ({ ...current, [customerId]: "" }));
-      router.refresh();
     }
   }
 
@@ -146,29 +132,10 @@ export function CustomerEditor({ customers, locale }: { customers: Customer[]; l
               Marketing consent
             </label>
             <button className="admin-button" type="button" onClick={() => void save(selected)}>Save profile</button>
-            <div className="admin-detail-block">
-              <h3>Notes</h3>
-              {selected.notes?.map((entry) => (
-                <div className="admin-note" key={entry.id}>
-                  <p>{entry.note}</p>
-                  <time>{formatSalonDate(entry.createdAt, locale)}</time>
-                </div>
-              ))}
-              <div className="admin-note-create">
-                <input className="admin-field" placeholder="Add a private salon note" value={note[selected.id] ?? ""} onChange={(event) => setNote((current) => ({ ...current, [selected.id]: event.target.value }))} />
-                <button className="admin-button secondary" type="button" onClick={() => void addNote(selected.id)}>Add note</button>
-              </div>
-            </div>
-            <div className="admin-detail-block">
-              <h3>Appointment history</h3>
-              {selected.appointments?.slice(0, 8).map((appointment) => (
-                <div className="admin-history-row" key={appointment.id}>
-                  <span>{formatSalonDate(appointment.startsAt, locale)}</span>
-                  <span className={`admin-status ${appointment.status}`}>{appointment.status}</span>
-                </div>
-              ))}
-            </div>
             {message ? <p className="admin-inline-message">{message}</p> : null}
+            <div className="admin-detail-block">
+              <CustomerHistoryPanel customerId={selected.id} locale={locale} />
+            </div>
           </section>
         ) : <div className="admin-empty">No customer selected.</div>}
       </div>

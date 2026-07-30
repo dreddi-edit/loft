@@ -39,6 +39,7 @@ const service = {
   slug: "cut",
   durationMin: 60,
   bufferAfterMin: 15,
+  priceCents: 3_500,
 };
 const staff = {
   id: "staff-1",
@@ -130,7 +131,47 @@ describe("BookingService availability enforcement", () => {
 
     expect(result).toEqual({ id: "appointment-1" });
     expect(salonRepository.createAppointmentIfAvailable).toHaveBeenCalledWith(
-      expect.objectContaining({ staffId: staff.id, startsAt }),
+      expect.objectContaining({
+        staffId: staff.id,
+        startsAt,
+        depositRequired: false,
+        noShowFeeCents: 0,
+      }),
+    );
+  });
+
+  it("persists deposit policy fields for an expensive service", async () => {
+    freezeNow("2026-08-03T08:00:00.000Z");
+    mockBase("2026-08-04");
+    vi.mocked(salonRepository.findServiceBySlug).mockResolvedValue({
+      ...service,
+      priceCents: 12_000,
+    } as never);
+    const startsAt = at("2026-08-04", 10 * 60);
+
+    await book(startsAt);
+
+    expect(salonRepository.createAppointmentIfAvailable).toHaveBeenCalledWith(
+      expect.objectContaining({
+        depositRequired: true,
+        noShowFeeCents: 3_600,
+      }),
+    );
+  });
+
+  it("skips verification for non-web channels on cheap services", async () => {
+    freezeNow("2026-08-03T08:00:00.000Z");
+    mockBase("2026-08-04");
+    const startsAt = at("2026-08-04", 10 * 60);
+
+    await book(startsAt, { sourceChannel: "whatsapp" });
+
+    expect(salonRepository.createAppointmentIfAvailable).toHaveBeenCalledWith(
+      expect.objectContaining({
+        depositRequired: false,
+        noShowFeeCents: 0,
+        sourceChannel: "whatsapp",
+      }),
     );
   });
 

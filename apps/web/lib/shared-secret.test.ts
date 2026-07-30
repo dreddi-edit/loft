@@ -102,6 +102,15 @@ describe("extractPresentedSecret", () => {
     ).toBeNull();
     expect(extractPresentedSecret(new Headers({}), definition)).toBeNull();
   });
+
+  it("accepts X-Cron-Secret for cron while still allowing Authorization Bearer", () => {
+    const definition = SHARED_SECRETS.cron;
+    expect(
+      extractPresentedSecret(new Headers({ "x-cron-secret": SECRET }), definition),
+    ).toBe(SECRET);
+    expect(extractPresentedSecret(bearer(SECRET), definition)).toBe(SECRET);
+    expect(extractPresentedSecret(new Headers({}), definition)).toBeNull();
+  });
 });
 
 describe("verifySharedSecret", () => {

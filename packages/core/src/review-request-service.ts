@@ -14,6 +14,13 @@ export const REVIEW_TEMPLATE_KEY = "appointment.review.v1";
 export const REVIEW_PLATFORM_GOOGLE = "google";
 
 /**
+ * Consent types that gate a review ask. `marketing` is the general opt-in written by the
+ * booking form and by `GdprService`; `review` is the narrower opt-out a customer can give
+ * for these asks alone. The newest record of EITHER saying no blocks the ask.
+ */
+export const REVIEW_CONSENT_TYPES = ["marketing", "review"] as const;
+
+/**
  * Long enough that the customer has left the chair, looked in a mirror somewhere else
  * and formed an opinion; short enough that the visit is still the most recent thing
  * that happened to their hair. Asking at the till reads as pressure, asking a week
@@ -319,23 +326,27 @@ export class ReviewRequestService {
    * on the customer and the newest `ConsentRecord` of each relevant type. Either one
    * saying no is a no — a stale `marketingOptIn` must never override a withdrawal, and
    * a withdrawal recorded only as a consent row must never be overridden by the flag.
+   *
+   * One indexed lookup per type rather than one capped read over both. A single
+   * `findMany(take: n)` across both types silently drops the newest row of the quieter
+   * type as soon as the other type has n newer rows, and the booking form writes a
+   * marketing consent row on every booking — so a customer who withdrew review consent
+   * once and then booked twenty times would have been asked again. `id` breaks ties on
+   * `createdAt`, which is only millisecond-precise: a grant and a withdrawal recorded in
+   * the same millisecond must not resolve in whichever order Postgres feels like.
    */
   private async hasMarketingConsent(customer: ReviewCustomer): Promise<boolean> {
     if (!customer.marketingOptIn) return false;
-    const records = await prisma.consentRecord.findMany({
-      where: { customerId: customer.id, type: { in: ["marketing", "review"] } },
-      orderBy: { createdAt: "desc" },
-      take: 20,
-      select: { type: true, granted: true },
-    });
-    const latest = new Map<string, boolean>();
-    for (const record of records) {
-      if (!latest.has(record.type)) latest.set(record.type, record.granted);
-    }
-    for (const granted of latest.values()) {
-      if (!granted) return false;
-    }
-    return true;
+    const latest = await Promise.all(
+      REVIEW_CONSENT_TYPES.map((type) =>
+        prisma.consentRecord.findFirst({
+          where: { customerId: customer.id, type },
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+          select: { granted: true },
+        }),
+      ),
+    );
+    return latest.every((record) => record === null || record.granted);
   }
 
   /**

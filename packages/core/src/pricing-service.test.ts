@@ -3,15 +3,38 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const { findUnique } = vi.hoisted(() => ({ findUnique: vi.fn() }));
 
 vi.mock("@hair-simo/db", () => ({
+
+  DEFAULT_TENANT_ID: "cltenant00000000000000001",
+  DEFAULT_TENANT_SLUG: "hairsimo-brixen",
+  currentTenantId: () => "cltenant00000000000000001",
+  tenantEmailKey: (email: string) => ({ tenantId_email: { tenantId: "cltenant00000000000000001", email } }),
+  tenantPhoneKey: (phone: string) => ({ tenantId_phone: { tenantId: "cltenant00000000000000001", phone } }),
+  tenantSlugKey: (slug: string) => ({ tenantId_slug: { tenantId: "cltenant00000000000000001", slug } }),
+  tenantSkuKey: (sku: string) => ({ tenantId_sku: { tenantId: "cltenant00000000000000001", sku } }),
+  tenantCodeKey: (code: string) => ({ tenantId_code: { tenantId: "cltenant00000000000000001", code } }),
+  tenantDayOfWeekKey: (dayOfWeek: number) => ({ tenantId_dayOfWeek: { tenantId: "cltenant00000000000000001", dayOfWeek } }),
+  getTenantContext: () => undefined,
+  forEachActiveTenant: async (work: (ctx: { tenantId: string; slug: string }) => Promise<void>) => {
+    await work({ tenantId: "cltenant00000000000000001", slug: "hairsimo-brixen" });
+    return { tenantCount: 1 };
+  },
+
   prisma: { service: { findUnique } },
 }));
+
+const originalEnv = { ...process.env };
+
+async function importPricingWithEnv(env: Record<string, string>) {
+  for (const [key, value] of Object.entries(env)) process.env[key] = value;
+  vi.resetModules();
+  return import("./pricing-service");
+}
 
 import {
   DEPOSIT_PERCENTAGE,
   DEPOSIT_THRESHOLD_CENTS,
   PricingService,
   buildPricing,
-  resetPricingWarnings,
   resolveDepositPolicy,
 } from "./pricing-service";
 
@@ -23,13 +46,12 @@ function money(amountCents: number) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  resetPricingWarnings();
-  vi.spyOn(console, "warn").mockImplementation(() => {});
 });
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  vi.restoreAllMocks();
+  process.env = { ...originalEnv };
+  vi.resetModules();
 });
 
 describe("deposit policy threshold", () => {
@@ -39,10 +61,10 @@ describe("deposit policy threshold", () => {
     expect(policy.deposit.amountCents).toBe(0);
   });
 
-  it("takes no deposit exactly at the threshold", () => {
+  it("requires a deposit exactly at the threshold", () => {
     const policy = resolveDepositPolicy(money(DEPOSIT_THRESHOLD_CENTS));
-    expect(policy.depositRequired).toBe(false);
-    expect(policy.deposit.amountCents).toBe(0);
+    expect(policy.depositRequired).toBe(true);
+    expect(policy.deposit.amountCents).toBe(1_500);
   });
 
   it("takes a percentage deposit above the threshold", () => {
@@ -52,28 +74,22 @@ describe("deposit policy threshold", () => {
     expect(policy.deposit.amountCents).toBe(1_500);
   });
 
-  it("reads the threshold and the percentage from the environment", () => {
-    vi.stubEnv("PAYMENTS_DEPOSIT_THRESHOLD_CENTS", "10000");
-    vi.stubEnv("PAYMENTS_DEPOSIT_PERCENTAGE", "50");
+  it("reads the threshold and the percentage from the environment", async () => {
+    const pricing = await importPricingWithEnv({
+      NO_SHOW_DEPOSIT_THRESHOLD_CENTS: "10000",
+      NO_SHOW_DEPOSIT_PERCENTAGE: "50",
+    });
 
-    expect(resolveDepositPolicy(money(9_000)).depositRequired).toBe(false);
-    const policy = resolveDepositPolicy(money(20_000));
+    expect(pricing.resolveDepositPolicy(money(9_000)).depositRequired).toBe(false);
+    const policy = pricing.resolveDepositPolicy(money(20_000));
     expect(policy.thresholdCents).toBe(10_000);
     expect(policy.deposit.amountCents).toBe(10_000);
   });
 
-  it("falls back to the defaults when the environment is not an integer", () => {
-    vi.stubEnv("PAYMENTS_DEPOSIT_PERCENTAGE", "thirty");
-    const policy = resolveDepositPolicy(money(10_000));
-    expect(policy.percentage).toBe(DEPOSIT_PERCENTAGE);
-    expect(policy.deposit.amountCents).toBe(3_000);
-    expect(console.warn).toHaveBeenCalled();
-  });
-
-  it("reports no deposit when the configured percentage rounds to zero", () => {
-    vi.stubEnv("PAYMENTS_DEPOSIT_PERCENTAGE", "0");
-    const policy = resolveDepositPolicy(money(10_000));
-    expect(policy.depositRequired).toBe(false);
+  it("keeps deposit required at zero percent but charges nothing", async () => {
+    const pricing = await importPricingWithEnv({ NO_SHOW_DEPOSIT_PERCENTAGE: "0" });
+    const policy = pricing.resolveDepositPolicy(money(10_000));
+    expect(policy.depositRequired).toBe(true);
     expect(policy.deposit.amountCents).toBe(0);
   });
 });

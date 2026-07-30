@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { runAssistant } from "@hair-simo/ai";
 import { prisma } from "@hair-simo/db";
 import { NextResponse } from "next/server";
@@ -33,6 +34,18 @@ const UNCERTAIN_MESSAGE =
   "Sorry, I could not confidently process your request. We will call you back shortly.";
 const FAILURE_MESSAGE = "An error occurred. Please try again or call us directly.";
 
+/**
+ * Keys the booking draft on the Dialogflow session. `parseDialogflowWebhook` falls back to
+ * the literal "unknown" when the payload carries no session, and every caller sharing one
+ * draft key would mean one caller hearing another caller's name and e-mail read back, so
+ * an unusable session gets a private, per-request key instead.
+ */
+function voiceConversationId(session: string): string {
+  const sanitized = session.slice(0, 100).replace(/[^A-Za-z0-9._-]/g, "-");
+  if (sanitized === "" || sanitized === "unknown") return `voice:${randomUUID()}`;
+  return `voice:${sanitized}`;
+}
+
 function parameterString(value: unknown): string | undefined {
   if (value === undefined || value === null) return undefined;
   const text = String(value).trim();
@@ -62,14 +75,23 @@ export const POST = apiRoute(
       const text = parsed.text.trim().slice(0, MAX_UTTERANCE_CHARS);
       const uncertain = text.length < 5 || parsed.confidence < UNCERTAIN_CONFIDENCE;
 
+      // A phone caller proves nothing: there is no manage link on a voice channel, so no
+      // access token is bound and the tools refuse to cancel or move any appointment. The
+      // Dialogflow `appointmentId` parameter is deliberately not forwarded — it is caller
+      // supplied speech, not proof of ownership. The session id keys the booking draft, so
+      // one call can collect details across turns and confirm a new appointment.
       const result = await runAssistant(
         {
           text: text.length > 0 ? text : " ",
           locale: parsed.locale,
-          serviceId: parameterString(parsed.parameters.serviceId) ?? "damen-schnitt",
-          appointmentId: parameterString(parsed.parameters.appointmentId),
+          serviceId: parameterString(parsed.parameters.serviceId),
         },
-        createAiTools(parsed.locale),
+        createAiTools({
+          locale: parsed.locale,
+          channel: "voice",
+          conversationId: voiceConversationId(parsed.session),
+          log: (message, fields) => log.info(message, fields),
+        }),
       );
 
       await prisma.callLog.create({

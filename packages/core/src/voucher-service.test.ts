@@ -1,0 +1,1010 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+type Row = Record<string, unknown>;
+type Where = Record<string, unknown>;
+type Selection = Record<string, boolean>;
+type TxContext = { reads: Map<string, number> };
+
+const { db } = vi.hoisted(() => {
+  const vouchers: Row[] = [];
+  const redemptions: Row[] = [];
+  const ops: string[] = [];
+  const attemptedCodes: string[] = [];
+  const versions = new Map<string, number>();
+
+  // Anchored to the suite's NOW. A 1970 clock makes every "updatedAt <= now - window"
+  // comparison trivially true and hides exactly the bugs these fakes exist to catch.
+  const ANCHOR = Date.parse("2026-07-29T09:00:00.000Z");
+
+  let sequence = 0;
+  let ids = 0;
+  let collisions = 0;
+  let serializable = false;
+
+  function tick(): Date {
+    sequence += 1;
+    return new Date(ANCHOR + sequence);
+  }
+
+  function comparable(value: unknown): unknown {
+    return value instanceof Date ? value.getTime() : value;
+  }
+
+  function matchValue(actual: unknown, expected: unknown): boolean {
+    if (expected === null) return actual === null || actual === undefined;
+    if (expected instanceof Date) return comparable(actual) === expected.getTime();
+    if (typeof expected === "object") {
+      return Object.entries(expected as Row).every(([operator, operand]) => {
+        if (operator === "in") return (operand as unknown[]).includes(actual);
+        if (operator === "not") return comparable(actual) !== comparable(operand);
+        const left = comparable(actual);
+        const right = comparable(operand);
+        if (typeof left !== "number" || typeof right !== "number") return false;
+        if (operator === "lt") return left < right;
+        if (operator === "lte") return left <= right;
+        if (operator === "gt") return left > right;
+        if (operator === "gte") return left >= right;
+        throw new Error(`unsupported operator ${operator}`);
+      });
+    }
+    return actual === expected;
+  }
+
+  function matches(row: Row, where: Where = {}): boolean {
+    return Object.entries(where).every(([key, expected]) => {
+      if (key === "OR") return (expected as Where[]).some((clause) => matches(row, clause));
+      if (key === "AND") return (expected as Where[]).every((clause) => matches(row, clause));
+      if (
+        key.includes("_") &&
+        expected !== null &&
+        typeof expected === "object" &&
+        !(expected instanceof Date) &&
+        !("in" in (expected as object) || "not" in (expected as object) || "lt" in (expected as object) || "lte" in (expected as object) || "gt" in (expected as object) || "gte" in (expected as object))
+      ) {
+        return Object.entries(expected as Row).every(([field, value]) => {
+          if (field === "tenantId" && row.tenantId === undefined) return true;
+          return matchValue(row[field], value);
+        });
+      }
+      return matchValue(row[key], expected);
+    });
+  }
+
+  function project(row: Row, select?: Selection): Row {
+    if (!select) return { ...row };
+    const out: Row = {};
+    for (const [key, wanted] of Object.entries(select)) {
+      if (wanted) out[key] = row[key];
+    }
+    return out;
+  }
+
+  function applyData(row: Row, data: Row): void {
+    for (const [key, value] of Object.entries(data)) {
+      if (value !== null && typeof value === "object" && !(value instanceof Date)) {
+        const operation = value as { increment?: number; decrement?: number };
+        if (typeof operation.increment === "number") {
+          row[key] = ((row[key] as number) ?? 0) + operation.increment;
+          continue;
+        }
+        if (typeof operation.decrement === "number") {
+          row[key] = ((row[key] as number) ?? 0) - operation.decrement;
+          continue;
+        }
+      }
+      row[key] = value;
+    }
+    row.updatedAt = tick();
+  }
+
+  function uniqueViolation(): Error {
+    return Object.assign(new Error("Unique constraint failed on the fields: (`code`)"), {
+      code: "P2002",
+    });
+  }
+
+  /**
+   * Postgres at Serializable aborts a transaction that writes after a row it read was
+   * changed by a concurrent committed transaction. Prisma surfaces that as P2034, which
+   * is what `withSerializationRetry` replays on.
+   */
+  function serializationConflict(): Error {
+    return Object.assign(new Error("could not serialize access due to concurrent update"), {
+      code: "P2034",
+    });
+  }
+
+  function noteRead(ctx: TxContext | null, id: string): void {
+    if (!ctx) return;
+    if (!ctx.reads.has(id)) ctx.reads.set(id, versions.get(id) ?? 0);
+  }
+
+  function assertNoConflict(ctx: TxContext | null): void {
+    if (!serializable || !ctx) return;
+    for (const [id, seen] of ctx.reads) {
+      if ((versions.get(id) ?? 0) !== seen) throw serializationConflict();
+    }
+  }
+
+  function bumpVersion(ctx: TxContext | null, id: string): void {
+    const next = (versions.get(id) ?? 0) + 1;
+    versions.set(id, next);
+    if (ctx) ctx.reads.set(id, next);
+  }
+
+  function makeClient(ctx: TxContext | null) {
+    const voucher = {
+      create: async ({ data }: { data: Row }) => {
+        ops.push("voucher.create");
+        attemptedCodes.push(data.code as string);
+        if (collisions > 0) {
+          collisions -= 1;
+          throw uniqueViolation();
+        }
+        if (vouchers.some((row) => row.code === data.code)) throw uniqueViolation();
+        assertNoConflict(ctx);
+        ids += 1;
+        const stamp = tick();
+        const row: Row = {
+          id: `voucher-${ids}`,
+          currency: "EUR",
+          expiresAt: null,
+          active: true,
+          issuedToCustomerId: null,
+          note: null,
+          createdAt: stamp,
+          updatedAt: stamp,
+          ...data,
+        };
+        vouchers.push(row);
+        versions.set(row.id as string, 0);
+        return { ...row };
+      },
+      findUnique: async (args: { where: Where; select?: Selection; include?: Row }) => {
+        ops.push("voucher.findUnique");
+        const row = vouchers.find((entry) => matches(entry, args.where));
+        if (!row) return null;
+        noteRead(ctx, row.id as string);
+        if (args.include && "redemptions" in args.include) {
+          const owned = redemptions
+            .filter((entry) => entry.voucherId === row.id)
+            .sort((left, right) => (left.createdAt as Date).getTime() - (right.createdAt as Date).getTime())
+            .map((entry) => ({ ...entry }));
+          return { ...row, redemptions: owned };
+        }
+        return project(row, args.select);
+      },
+      findUniqueOrThrow: async (args: { where: Where; select?: Selection }) => {
+        const row = vouchers.find((entry) => matches(entry, args.where));
+        ops.push("voucher.findUniqueOrThrow");
+        if (!row) throw Object.assign(new Error("No Voucher found"), { code: "P2025" });
+        noteRead(ctx, row.id as string);
+        return project(row, args.select);
+      },
+      update: async ({ where, data }: { where: Where; data: Row }) => {
+        ops.push("voucher.update");
+        const row = vouchers.find((entry) => matches(entry, where));
+        if (!row) throw Object.assign(new Error("No Voucher found"), { code: "P2025" });
+        assertNoConflict(ctx);
+        applyData(row, data);
+        bumpVersion(ctx, row.id as string);
+        return { ...row };
+      },
+      updateMany: async ({ where, data }: { where: Where; data: Row }) => {
+        ops.push("voucher.updateMany");
+        assertNoConflict(ctx);
+        const targets = vouchers.filter((entry) => matches(entry, where));
+        for (const row of targets) {
+          applyData(row, data);
+          bumpVersion(ctx, row.id as string);
+        }
+        return { count: targets.length };
+      },
+      groupBy: async (args: { by: string[]; where?: Where; _sum?: Selection; _count?: Row }) => {
+        ops.push("voucher.groupBy");
+        const grouped = new Map<string, Row[]>();
+        for (const row of vouchers.filter((entry) => matches(entry, args.where))) {
+          const key = args.by.map((field) => String(row[field])).join(" ");
+          const bucket = grouped.get(key);
+          if (bucket) bucket.push(row);
+          else grouped.set(key, [row]);
+        }
+        return [...grouped.values()].map((bucket) => {
+          const head = bucket[0] as Row;
+          const sums: Row = {};
+          for (const field of Object.keys(args._sum ?? {})) {
+            sums[field] = bucket.reduce((total, row) => total + (row[field] as number), 0);
+          }
+          return {
+            ...Object.fromEntries(args.by.map((field) => [field, head[field]])),
+            _sum: sums,
+            _count: { _all: bucket.length },
+          };
+        });
+      },
+    };
+
+    const voucherRedemption = {
+      findFirst: async ({ where }: { where: Where }) => {
+        ops.push("voucherRedemption.findFirst");
+        const row = redemptions.find((entry) => matches(entry, where));
+        return row ? { ...row } : null;
+      },
+      create: async ({ data }: { data: Row }) => {
+        ops.push("voucherRedemption.create");
+        assertNoConflict(ctx);
+        ids += 1;
+        const row: Row = {
+          id: `redemption-${ids}`,
+          appointmentId: null,
+          paymentId: null,
+          createdAt: tick(),
+          ...data,
+        };
+        redemptions.push(row);
+        return { ...row };
+      },
+    };
+
+    return { voucher, voucherRedemption };
+  }
+
+  const prisma = {
+    ...makeClient(null),
+    $transaction: async <T>(run: (tx: ReturnType<typeof makeClient>) => Promise<T>): Promise<T> => {
+      // Deliberately NOT serialised. Two overlapping redemptions must interleave at every
+      // await exactly as two database sessions do, otherwise the race can never be seen.
+      const ctx: TxContext = { reads: new Map() };
+      return run(makeClient(ctx));
+    },
+  };
+
+  return {
+    db: {
+      prisma,
+      vouchers,
+      redemptions,
+      ops,
+      attemptedCodes,
+      setCollisions(count: number) {
+        collisions = count;
+      },
+      setSerializable(value: boolean) {
+        serializable = value;
+      },
+      seedVoucher(overrides: Row = {}): Row {
+        ids += 1;
+        const row: Row = {
+          id: `voucher-${ids}`,
+          initialCents: 10_000,
+          remainingCents: 10_000,
+          currency: "EUR",
+          expiresAt: new Date("2031-07-29T22:00:00.000Z"),
+          active: true,
+          issuedToCustomerId: null,
+          note: null,
+          createdAt: new Date(ANCHOR - 86_400_000),
+          updatedAt: new Date(ANCHOR - 86_400_000),
+          ...overrides,
+        };
+        vouchers.push(row);
+        versions.set(row.id as string, 0);
+        return row;
+      },
+      reset() {
+        vouchers.length = 0;
+        redemptions.length = 0;
+        ops.length = 0;
+        attemptedCodes.length = 0;
+        versions.clear();
+        sequence = 0;
+        ids = 0;
+        collisions = 0;
+        serializable = false;
+      },
+    },
+  };
+});
+
+vi.mock("@hair-simo/db", () => ({
+
+  DEFAULT_TENANT_ID: "cltenant00000000000000001",
+  DEFAULT_TENANT_SLUG: "hairsimo-brixen",
+  currentTenantId: () => "cltenant00000000000000001",
+  tenantEmailKey: (email: string) => ({ tenantId_email: { tenantId: "cltenant00000000000000001", email } }),
+  tenantPhoneKey: (phone: string) => ({ tenantId_phone: { tenantId: "cltenant00000000000000001", phone } }),
+  tenantSlugKey: (slug: string) => ({ tenantId_slug: { tenantId: "cltenant00000000000000001", slug } }),
+  tenantSkuKey: (sku: string) => ({ tenantId_sku: { tenantId: "cltenant00000000000000001", sku } }),
+  tenantCodeKey: (code: string) => ({ tenantId_code: { tenantId: "cltenant00000000000000001", code } }),
+  tenantDayOfWeekKey: (dayOfWeek: number) => ({ tenantId_dayOfWeek: { tenantId: "cltenant00000000000000001", dayOfWeek } }),
+  getTenantContext: () => undefined,
+  forEachActiveTenant: async (work: (ctx: { tenantId: string; slug: string }) => Promise<void>) => {
+    await work({ tenantId: "cltenant00000000000000001", slug: "hairsimo-brixen" });
+    return { tenantCount: 1 };
+  },
+ prisma: db.prisma }));
+
+import {
+  VOUCHER_CODE_ALPHABET,
+  VOUCHER_CODE_DATA_LENGTH,
+  VOUCHER_CODE_LENGTH,
+  VOUCHER_DEFAULT_VALIDITY_MONTHS,
+  VOUCHER_MAX_CENTS,
+  VOUCHER_MIN_CENTS,
+  VOUCHER_MINIMUM_VALIDITY_MONTHS,
+  VoucherService,
+  formatVoucherCode,
+  generateVoucherCode,
+  isValidVoucherCode,
+  parseVoucherCode,
+  voucherExpiryPolicy,
+} from "./voucher-service";
+import { endOfSalonDay, parseSalonDay } from "./time";
+
+const NOW = new Date("2026-07-29T09:00:00.000Z");
+const service = new VoucherService();
+
+/** Deterministic replacement for the CSPRNG so a suite run is reproducible. */
+function seededRandom(seed: number): (max: number) => number {
+  let state = seed >>> 0;
+  return (max: number) => {
+    state = (state * 1_664_525 + 1_013_904_223) >>> 0;
+    return state % max;
+  };
+}
+
+function seededCode(seed: number): string {
+  return generateVoucherCode(seededRandom(seed));
+}
+
+/** Derives the check character through the public API only. */
+function codeFor(data: string): string {
+  for (const character of VOUCHER_CODE_ALPHABET) {
+    if (isValidVoucherCode(data + character)) return data + character;
+  }
+  throw new Error(`no check character completes "${data}"`);
+}
+
+function seedVoucher(overrides: Row = {}): { id: string; code: string; row: Row } {
+  const row = db.seedVoucher({
+    code: (overrides.code as string) ?? seededCode(db.vouchers.length + 7),
+    ...overrides,
+  });
+  return { id: row.id as string, code: row.code as string, row };
+}
+
+function stored(id: string): Row {
+  const row = db.vouchers.find((entry) => entry.id === id);
+  if (!row) throw new Error(`no voucher ${id}`);
+  return row;
+}
+
+beforeEach(() => {
+  db.reset();
+  delete process.env.VOUCHER_VALIDITY_MONTHS;
+  delete process.env.VOUCHER_MIN_VALIDITY_MONTHS;
+});
+
+describe("code alphabet", () => {
+  it("excludes every character a pen or a phone line turns into another one", () => {
+    expect(VOUCHER_CODE_ALPHABET).toHaveLength(23);
+    expect(new Set(VOUCHER_CODE_ALPHABET).size).toBe(23);
+    for (const excluded of [..."012568EILNOQU"]) {
+      expect(VOUCHER_CODE_ALPHABET).not.toContain(excluded);
+    }
+    // Only A and Y survive, so a random code cannot spell a word in any salon locale.
+    expect([...VOUCHER_CODE_ALPHABET].filter((c) => "AEIOUY".includes(c))).toEqual(["A", "Y"]);
+    expect(VOUCHER_CODE_LENGTH).toBe(VOUCHER_CODE_DATA_LENGTH + 1);
+  });
+
+  it("rejects an excluded character that has no single intended reading", () => {
+    const code = seededCode(11);
+    for (const ambiguous of [..."01EILOQ"]) {
+      const typed = ambiguous + code.slice(1);
+      expect(() => parseVoucherCode(typed)).toThrow("VOUCHER_CODE_MALFORMED");
+    }
+  });
+
+  it("repairs the excluded characters that have exactly one intended reading", () => {
+    const code = codeFor("ZSGBVMZSGBV");
+    const repairs: [string, string][] = [
+      ["2", "Z"],
+      ["5", "S"],
+      ["6", "G"],
+      ["8", "B"],
+      ["U", "V"],
+      ["N", "M"],
+    ];
+    for (const [typed, intended] of repairs) {
+      const mistyped = code.replaceAll(intended, typed);
+      expect(mistyped).not.toBe(code);
+      expect(parseVoucherCode(mistyped)).toBe(code);
+    }
+    expect(parseVoucherCode("z5g8un" + code.slice(6))).toBe(code);
+  });
+
+  it("detects a single-character typo in every position of every code", () => {
+    let checked = 0;
+    for (let seed = 1; seed <= 40; seed += 1) {
+      const code = seededCode(seed);
+      expect(isValidVoucherCode(code)).toBe(true);
+      for (let index = 0; index < VOUCHER_CODE_LENGTH; index += 1) {
+        for (const replacement of VOUCHER_CODE_ALPHABET) {
+          if (replacement === code[index]) continue;
+          const mistyped = code.slice(0, index) + replacement + code.slice(index + 1);
+          checked += 1;
+          expect(isValidVoucherCode(mistyped)).toBe(false);
+          expect(() => parseVoucherCode(mistyped)).toThrow("VOUCHER_CODE_CHECKSUM_FAILED");
+        }
+      }
+    }
+    expect(checked).toBe(40 * VOUCHER_CODE_LENGTH * (VOUCHER_CODE_ALPHABET.length - 1));
+  });
+
+  it("detects a transposition of any two characters, adjacent or not", () => {
+    let checked = 0;
+    for (let seed = 1; seed <= 40; seed += 1) {
+      const code = seededCode(seed);
+      for (let left = 0; left < VOUCHER_CODE_LENGTH; left += 1) {
+        for (let right = left + 1; right < VOUCHER_CODE_LENGTH; right += 1) {
+          if (code[left] === code[right]) continue;
+          const swapped = [...code];
+          [swapped[left], swapped[right]] = [swapped[right] as string, swapped[left] as string];
+          checked += 1;
+          expect(isValidVoucherCode(swapped.join(""))).toBe(false);
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(2_000);
+  });
+
+  it("never lets a typo resolve to a different live voucher", async () => {
+    const first = seedVoucher({ code: seededCode(3) });
+    seedVoucher({ code: seededCode(4) });
+    seedVoucher({ code: seededCode(5) });
+
+    const mistyped = first.code.slice(0, 4) + swap(first.code[4] as string) + first.code.slice(5);
+    db.ops.length = 0;
+    await expect(service.balance(mistyped, NOW)).rejects.toThrow("VOUCHER_CODE_CHECKSUM_FAILED");
+    expect(db.ops).toEqual([]);
+  });
+
+  function swap(character: string): string {
+    const next = VOUCHER_CODE_ALPHABET[(VOUCHER_CODE_ALPHABET.indexOf(character) + 1) % 23];
+    return next as string;
+  }
+
+  it("round trips through the printed grouping and anything a human types", () => {
+    for (let seed = 1; seed <= 25; seed += 1) {
+      const code = seededCode(seed);
+      const display = formatVoucherCode(code);
+      expect(display).toMatch(/^[3-9A-Z]{4}-[3-9A-Z]{4}-[3-9A-Z]{4}$/);
+      expect(parseVoucherCode(display)).toBe(code);
+      expect(parseVoucherCode(display.toLowerCase())).toBe(code);
+      expect(parseVoucherCode(`  ${display.replaceAll("-", " ")}  `)).toBe(code);
+      expect(parseVoucherCode(`${display}\n`)).toBe(code);
+    }
+  });
+
+  it("rejects anything that is not exactly twelve alphabet characters", () => {
+    const code = seededCode(9);
+    for (const bad of ["", code.slice(0, 11), `${code}A`, "----", "!!!!!!!!!!!!"]) {
+      expect(() => parseVoucherCode(bad)).toThrow("VOUCHER_CODE_MALFORMED");
+      expect(isValidVoucherCode(bad)).toBe(false);
+    }
+  });
+
+  it("generates codes that always validate and never repeat in practice", () => {
+    const codes = new Set(Array.from({ length: 500 }, () => generateVoucherCode()));
+    expect(codes.size).toBe(500);
+    for (const code of codes) expect(isValidVoucherCode(code)).toBe(true);
+  });
+});
+
+describe("issue", () => {
+  it("stores the money twice and hands back a display code", async () => {
+    const summary = await service.issue({ initialCents: 10_000, note: "  Christmas  " }, NOW);
+
+    expect(summary.initialCents).toBe(10_000);
+    expect(summary.remainingCents).toBe(10_000);
+    expect(summary.currency).toBe("EUR");
+    expect(summary.status).toBe("active");
+    expect(summary.note).toBe("Christmas");
+    expect(summary.displayCode).toBe(formatVoucherCode(summary.code));
+    expect(isValidVoucherCode(summary.code)).toBe(true);
+    expect(db.vouchers).toHaveLength(1);
+  });
+
+  it("expires at the close of the salon day five years on, in the salon zone", async () => {
+    const summary = await service.issue({ initialCents: 5_000 }, NOW);
+    expect(VOUCHER_DEFAULT_VALIDITY_MONTHS).toBe(60);
+    expect(summary.expiresAt).toEqual(endOfSalonDay(parseSalonDay("2031-07-29")));
+    expect(summary.expiresAt).toEqual(new Date("2031-07-29T22:00:00.000Z"));
+  });
+
+  it("lands on the right side of a winter anniversary too", async () => {
+    const winter = new Date("2026-01-15T09:00:00.000Z");
+    const summary = await service.issue({ initialCents: 5_000 }, winter);
+    expect(summary.expiresAt).toEqual(new Date("2031-01-15T23:00:00.000Z"));
+  });
+
+  it("clamps the anniversary day to the length of the target month", async () => {
+    const summary = await service.issue(
+      { initialCents: 5_000, validityMonths: 37 },
+      new Date("2026-01-31T09:00:00.000Z"),
+    );
+    expect(summary.expiresAt).toEqual(endOfSalonDay(parseSalonDay("2029-02-28")));
+  });
+
+  it("refuses a validity shorter than the legal floor unless it is overridden", async () => {
+    expect(VOUCHER_MINIMUM_VALIDITY_MONTHS).toBe(36);
+    await expect(service.issue({ initialCents: 5_000, validityMonths: 12 }, NOW)).rejects.toThrow(
+      "VOUCHER_VALIDITY_TOO_SHORT",
+    );
+
+    const forced = await service.issue(
+      { initialCents: 5_000, validityMonths: 12, overrideMinimumValidity: true },
+      NOW,
+    );
+    expect(forced.expiresAt).toEqual(endOfSalonDay(parseSalonDay("2027-07-29")));
+
+    const exact = await service.issue({ initialCents: 5_000, validityMonths: 36 }, NOW);
+    expect(exact.expiresAt).toEqual(endOfSalonDay(parseSalonDay("2029-07-29")));
+  });
+
+  it("accepts an explicit never-expires and an explicit future instant", async () => {
+    const forever = await service.issue({ initialCents: 5_000, expiresAt: null }, NOW);
+    expect(forever.expiresAt).toBeNull();
+    expect(forever.status).toBe("active");
+
+    const explicit = await service.issue(
+      { initialCents: 5_000, expiresAt: "2030-12-24T10:00:00.000Z" },
+      NOW,
+    );
+    expect(explicit.expiresAt).toEqual(new Date("2030-12-24T10:00:00.000Z"));
+  });
+
+  it("refuses an expiry in the past and both expiry inputs at once", async () => {
+    await expect(
+      service.issue({ initialCents: 5_000, expiresAt: "2020-01-01T00:00:00.000Z" }, NOW),
+    ).rejects.toThrow("VOUCHER_EXPIRY_IN_THE_PAST");
+    await expect(
+      service.issue(
+        { initialCents: 5_000, expiresAt: "2031-01-01T00:00:00.000Z", validityMonths: 60 },
+        NOW,
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("refuses amounts outside the sellable range and unknown fields", async () => {
+    await expect(service.issue({ initialCents: VOUCHER_MIN_CENTS - 1 }, NOW)).rejects.toThrow();
+    await expect(service.issue({ initialCents: VOUCHER_MAX_CENTS + 1 }, NOW)).rejects.toThrow();
+    await expect(service.issue({ initialCents: 10_000.5 }, NOW)).rejects.toThrow();
+    await expect(
+      service.issue({ initialCents: 10_000, remainingCents: 99_999 } as never, NOW),
+    ).rejects.toThrow();
+    expect(db.vouchers).toHaveLength(0);
+  });
+
+  it("normalises the currency and rejects a non ISO code", async () => {
+    const summary = await service.issue({ initialCents: 5_000, currency: "chf" }, NOW);
+    expect(summary.currency).toBe("CHF");
+    await expect(service.issue({ initialCents: 5_000, currency: "EURO" }, NOW)).rejects.toThrow();
+  });
+
+  it("draws a fresh code after a unique-index collision instead of retrying the same one", async () => {
+    db.setCollisions(3);
+    const summary = await service.issue({ initialCents: 5_000 }, NOW);
+
+    expect(db.attemptedCodes).toHaveLength(4);
+    expect(new Set(db.attemptedCodes).size).toBe(4);
+    for (const attempt of db.attemptedCodes) expect(isValidVoucherCode(attempt)).toBe(true);
+    expect(summary.code).toBe(db.attemptedCodes.at(-1));
+    expect(db.vouchers).toHaveLength(1);
+  });
+
+  it("gives up loudly rather than looping forever on collisions", async () => {
+    db.setCollisions(8);
+    await expect(service.issue({ initialCents: 5_000 }, NOW)).rejects.toThrow(
+      "VOUCHER_CODE_GENERATION_FAILED",
+    );
+    expect(db.attemptedCodes).toHaveLength(8);
+    expect(db.vouchers).toHaveLength(0);
+  });
+
+  it("reads the expiry policy from the environment", () => {
+    process.env.VOUCHER_VALIDITY_MONTHS = "24";
+    process.env.VOUCHER_MIN_VALIDITY_MONTHS = "12";
+    expect(voucherExpiryPolicy()).toMatchObject({
+      defaultValidityMonths: 24,
+      minimumValidityMonths: 12,
+    });
+
+    process.env.VOUCHER_VALIDITY_MONTHS = "not-a-number";
+    expect(() => voucherExpiryPolicy()).toThrow("Invalid VOUCHER_VALIDITY_MONTHS");
+  });
+});
+
+describe("balance lookup", () => {
+  it("shows the bearer their money and nothing about the buyer", async () => {
+    const { code } = seedVoucher({
+      remainingCents: 3_500,
+      issuedToCustomerId: "customer-1",
+      note: "bought by Frau Gruber",
+    });
+
+    const balance = await service.balance(code, NOW);
+    expect(Object.keys(balance).sort()).toEqual([
+      "code",
+      "currency",
+      "displayCode",
+      "expiresAt",
+      "initialCents",
+      "remainingCents",
+      "status",
+    ]);
+    expect(balance.remainingCents).toBe(3_500);
+    expect(JSON.stringify(balance)).not.toContain("Gruber");
+    expect(JSON.stringify(balance)).not.toContain("customer-1");
+  });
+
+  it("names every terminal state", async () => {
+    const spent = seedVoucher({ remainingCents: 0 });
+    const blocked = seedVoucher({ active: false });
+    const lapsed = seedVoucher({ expiresAt: NOW });
+    const live = seedVoucher({ expiresAt: new Date(NOW.getTime() + 1) });
+
+    await expect(service.balance(spent.code, NOW)).resolves.toMatchObject({ status: "spent" });
+    await expect(service.balance(blocked.code, NOW)).resolves.toMatchObject({ status: "inactive" });
+    await expect(service.balance(lapsed.code, NOW)).resolves.toMatchObject({ status: "expired" });
+    await expect(service.balance(live.code, NOW)).resolves.toMatchObject({ status: "active" });
+  });
+
+  it("reports an unknown but well-formed code as not found", async () => {
+    await expect(service.balance(seededCode(99), NOW)).rejects.toThrow("VOUCHER_NOT_FOUND");
+  });
+});
+
+describe("redeem", () => {
+  it("spends a hundred euro voucher in two bites and refuses the third", async () => {
+    const { id, code } = seedVoucher({ initialCents: 10_000, remainingCents: 10_000 });
+
+    const first = await service.redeem(code, 6_500, { appointmentId: "appointment-1" }, NOW);
+    expect(first).toMatchObject({
+      amountCents: 6_500,
+      remainingCents: 3_500,
+      currency: "EUR",
+      idempotent: false,
+    });
+    expect(stored(id).remainingCents).toBe(3_500);
+
+    const second = await service.redeem(code, 3_500, { appointmentId: "appointment-2" }, NOW);
+    expect(second).toMatchObject({ amountCents: 3_500, remainingCents: 0, idempotent: false });
+    expect(stored(id).remainingCents).toBe(0);
+
+    await expect(
+      service.redeem(code, 3_500, { appointmentId: "appointment-3" }, NOW),
+    ).rejects.toThrow("VOUCHER_INSUFFICIENT_BALANCE");
+
+    expect(stored(id).remainingCents).toBe(0);
+    expect(db.redemptions).toHaveLength(2);
+    await expect(service.balance(code, NOW)).resolves.toMatchObject({ status: "spent" });
+  });
+
+  it("returns the first result unchanged when a payment is retried", async () => {
+    const { id, code } = seedVoucher();
+    const context = { paymentId: "payment-1", appointmentId: "appointment-1" };
+
+    const first = await service.redeem(code, 4_000, context, NOW);
+    const retry = await service.redeem(code, 4_000, context, NOW);
+
+    expect(first.idempotent).toBe(false);
+    expect(retry.idempotent).toBe(true);
+    expect(retry.redemptionId).toBe(first.redemptionId);
+    expect(retry.remainingCents).toBe(6_000);
+    expect(stored(id).remainingCents).toBe(6_000);
+    expect(db.redemptions).toHaveLength(1);
+  });
+
+  it("keys idempotency on the payment when there is one, so a deposit and a balance both draw", async () => {
+    const { id, code } = seedVoucher();
+
+    const deposit = await service.redeem(
+      code,
+      2_000,
+      { appointmentId: "appointment-1", paymentId: "deposit-1" },
+      NOW,
+    );
+    const balance = await service.redeem(
+      code,
+      5_000,
+      { appointmentId: "appointment-1", paymentId: "balance-1" },
+      NOW,
+    );
+
+    expect(deposit.idempotent).toBe(false);
+    expect(balance.idempotent).toBe(false);
+    expect(stored(id).remainingCents).toBe(3_000);
+    expect(db.redemptions).toHaveLength(2);
+
+    // Same appointment, no payment id: keyed by appointment, so it collides with the
+    // deposit rather than silently drawing a third time.
+    await expect(
+      service.redeem(code, 1_000, { appointmentId: "appointment-1" }, NOW),
+    ).rejects.toThrow("VOUCHER_REDEMPTION_AMOUNT_MISMATCH");
+    expect(stored(id).remainingCents).toBe(3_000);
+  });
+
+  it("refuses a retry that claims a different amount", async () => {
+    const { code } = seedVoucher();
+    await service.redeem(code, 4_000, { paymentId: "payment-1" }, NOW);
+    await expect(service.redeem(code, 4_500, { paymentId: "payment-1" }, NOW)).rejects.toThrow(
+      "VOUCHER_REDEMPTION_AMOUNT_MISMATCH",
+    );
+    expect(db.redemptions).toHaveLength(1);
+  });
+
+  it("insists on something to be idempotent about", async () => {
+    const { code } = seedVoucher();
+    await expect(service.redeem(code, 1_000, {}, NOW)).rejects.toThrow();
+    expect(db.redemptions).toHaveLength(0);
+  });
+
+  it("rejects an unknown, an inactive, an expired and a foreign-currency card", async () => {
+    await expect(
+      service.redeem(seededCode(77), 1_000, { paymentId: "payment-x" }, NOW),
+    ).rejects.toThrow("VOUCHER_NOT_FOUND");
+
+    const blocked = seedVoucher({ active: false });
+    await expect(
+      service.redeem(blocked.code, 1_000, { paymentId: "payment-a" }, NOW),
+    ).rejects.toThrow("VOUCHER_INACTIVE");
+
+    const lapsed = seedVoucher({ expiresAt: NOW });
+    await expect(service.redeem(lapsed.code, 1_000, { paymentId: "payment-b" }, NOW)).rejects.toThrow(
+      "VOUCHER_EXPIRED",
+    );
+
+    const swiss = seedVoucher({ currency: "CHF" });
+    await expect(service.redeem(swiss.code, 1_000, { paymentId: "payment-c" }, NOW)).rejects.toThrow(
+      "VOUCHER_CURRENCY_MISMATCH",
+    );
+    await expect(
+      service.redeem(swiss.code, 1_000, { paymentId: "payment-c", currency: "chf" }, NOW),
+    ).resolves.toMatchObject({ currency: "CHF", remainingCents: 9_000 });
+
+    const thin = seedVoucher({ remainingCents: 999 });
+    await expect(service.redeem(thin.code, 1_000, { paymentId: "payment-d" }, NOW)).rejects.toThrow(
+      "VOUCHER_INSUFFICIENT_BALANCE",
+    );
+
+    expect(db.redemptions).toHaveLength(1);
+    expect(db.vouchers.every((row) => (row.remainingCents as number) >= 0)).toBe(true);
+  });
+
+  it("refuses a zero or negative amount", async () => {
+    const { code } = seedVoucher();
+    await expect(service.redeem(code, 0, { paymentId: "payment-1" }, NOW)).rejects.toThrow();
+    await expect(service.redeem(code, -5_000, { paymentId: "payment-2" }, NOW)).rejects.toThrow();
+    expect(stored(db.vouchers[0]?.id as string).remainingCents).toBe(10_000);
+  });
+
+  it("keeps redeeming right up to the last instant of validity", async () => {
+    const { code } = seedVoucher({ expiresAt: new Date(NOW.getTime() + 1) });
+    await expect(
+      service.redeem(code, 1_000, { paymentId: "payment-1" }, NOW),
+    ).resolves.toMatchObject({ remainingCents: 9_000 });
+  });
+});
+
+describe("redeem under concurrency", () => {
+  it("never overdraws when two tills spend the same card at the same moment", async () => {
+    const { id, code } = seedVoucher({ initialCents: 10_000, remainingCents: 10_000 });
+    db.ops.length = 0;
+
+    const settled = await Promise.allSettled([
+      service.redeem(code, 6_500, { appointmentId: "appointment-1" }, NOW),
+      service.redeem(code, 6_500, { appointmentId: "appointment-2" }, NOW),
+    ]);
+
+    // Proof that this was a real interleaving: both transactions had already read the
+    // balance before either of them wrote. Sequential awaits cannot produce this.
+    const firstWrite = db.ops.indexOf("voucher.updateMany");
+    expect(firstWrite).toBeGreaterThan(0);
+    expect(db.ops.slice(0, firstWrite).filter((op) => op === "voucher.findUnique")).toHaveLength(2);
+
+    const fulfilled = settled.filter((entry) => entry.status === "fulfilled");
+    const rejected = settled.filter((entry) => entry.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({
+      message: "VOUCHER_INSUFFICIENT_BALANCE",
+    });
+    expect(stored(id).remainingCents).toBe(3_500);
+    expect(db.redemptions).toHaveLength(1);
+  });
+
+  it("never overdraws when the database aborts the loser at Serializable instead", async () => {
+    db.setSerializable(true);
+    const { id, code } = seedVoucher({ initialCents: 10_000, remainingCents: 10_000 });
+    db.ops.length = 0;
+
+    const settled = await Promise.allSettled([
+      service.redeem(code, 6_500, { appointmentId: "appointment-1" }, NOW),
+      service.redeem(code, 6_500, { appointmentId: "appointment-2" }, NOW),
+    ]);
+
+    expect(settled.filter((entry) => entry.status === "fulfilled")).toHaveLength(1);
+    const rejected = settled.find((entry) => entry.status === "rejected") as PromiseRejectedResult;
+    expect(rejected.reason).toMatchObject({ message: "VOUCHER_INSUFFICIENT_BALANCE" });
+    // The loser was replayed rather than propagating the raw 40001 to the till: three
+    // transaction bodies ran for two redemptions, and the replay re-read the new balance.
+    expect(db.ops.filter((op) => op === "voucherRedemption.findFirst")).toHaveLength(3);
+    expect(db.ops.filter((op) => op === "voucher.updateMany")).toHaveLength(2);
+    expect(stored(id).remainingCents).toBe(3_500);
+    expect(db.redemptions).toHaveLength(1);
+  });
+
+  it("lets exactly as many parallel redemptions through as the balance covers", async () => {
+    const { id, code } = seedVoucher({ initialCents: 10_000, remainingCents: 10_000 });
+
+    const settled = await Promise.allSettled(
+      Array.from({ length: 5 }, (_, index) =>
+        service.redeem(code, 3_000, { appointmentId: `appointment-${index}` }, NOW),
+      ),
+    );
+
+    const fulfilled = settled.filter((entry) => entry.status === "fulfilled");
+    expect(fulfilled).toHaveLength(3);
+    expect(stored(id).remainingCents).toBe(1_000);
+    expect(db.redemptions).toHaveLength(3);
+    expect(db.redemptions.reduce((sum, row) => sum + (row.amountCents as number), 0)).toBe(9_000);
+    for (const entry of settled) {
+      if (entry.status === "rejected") {
+        expect(entry.reason).toMatchObject({ message: "VOUCHER_INSUFFICIENT_BALANCE" });
+      }
+    }
+  });
+
+  it("loses the race to a card blocked mid-redemption instead of spending it", async () => {
+    const { id, code } = seedVoucher({ remainingCents: 10_000 });
+
+    const [redeemed, blocked] = await Promise.allSettled([
+      service.redeem(code, 1_000, { paymentId: "payment-1" }, NOW),
+      service.deactivate(code, "stolen", NOW),
+    ]);
+
+    expect(blocked.status).toBe("fulfilled");
+    expect(redeemed.status).toBe("rejected");
+    expect((redeemed as PromiseRejectedResult).reason).toMatchObject({
+      message: "VOUCHER_INACTIVE",
+    });
+    expect(stored(id).remainingCents).toBe(10_000);
+    expect(stored(id).active).toBe(false);
+    expect(db.redemptions).toHaveLength(0);
+  });
+
+  it("charges a retried payment once even when both attempts arrive together", async () => {
+    db.setSerializable(true);
+    const { id, code } = seedVoucher({ initialCents: 10_000, remainingCents: 10_000 });
+    const context = { paymentId: "payment-1", appointmentId: "appointment-1" };
+
+    const [first, second] = await Promise.all([
+      service.redeem(code, 4_000, context, NOW),
+      service.redeem(code, 4_000, context, NOW),
+    ]);
+
+    expect([first.idempotent, second.idempotent].sort()).toEqual([false, true]);
+    expect(first.redemptionId).toBe(second.redemptionId);
+    expect(stored(id).remainingCents).toBe(6_000);
+    expect(db.redemptions).toHaveLength(1);
+  });
+});
+
+describe("admin view", () => {
+  it("lists what a card was spent on and what that adds up to", async () => {
+    const { code } = seedVoucher({ issuedToCustomerId: "customer-1", note: "gift" });
+    await service.redeem(code, 2_000, { appointmentId: "appointment-1" }, NOW);
+    await service.redeem(code, 1_500, { paymentId: "payment-9" }, NOW);
+
+    const detail = await service.getVoucher(code, NOW);
+    expect(detail.redeemedCents).toBe(3_500);
+    expect(detail.remainingCents).toBe(6_500);
+    expect(detail.initialCents - detail.redeemedCents).toBe(detail.remainingCents);
+    expect(detail.redemptions.map((entry) => entry.amountCents)).toEqual([2_000, 1_500]);
+    expect(detail.redemptions[0]?.appointmentId).toBe("appointment-1");
+    expect(detail.redemptions[1]?.paymentId).toBe("payment-9");
+    expect(detail.issuedToCustomerId).toBe("customer-1");
+  });
+
+  it("blocks a lost card without touching the balance and can hand it back", async () => {
+    const { id, code } = seedVoucher({ remainingCents: 7_000, note: "gift" });
+
+    const blocked = await service.deactivate(code, "  card lost in Brixen  ", NOW);
+    expect(blocked.active).toBe(false);
+    expect(blocked.status).toBe("inactive");
+    expect(blocked.remainingCents).toBe(7_000);
+    expect(blocked.note).toBe("gift | 2026-07-29 deactivated: card lost in Brixen");
+
+    await expect(service.redeem(code, 1_000, { paymentId: "payment-1" }, NOW)).rejects.toThrow(
+      "VOUCHER_INACTIVE",
+    );
+
+    const restored = await service.reactivate(code, NOW);
+    expect(restored.active).toBe(true);
+    expect(restored.remainingCents).toBe(7_000);
+    expect(stored(id).note).toBe("gift | 2026-07-29 deactivated: card lost in Brixen");
+    await expect(
+      service.redeem(code, 1_000, { paymentId: "payment-1" }, NOW),
+    ).resolves.toMatchObject({ remainingCents: 6_000 });
+  });
+});
+
+describe("outstanding liability", () => {
+  it("matches the fixtures euro for euro", async () => {
+    seedVoucher({ initialCents: 10_000, remainingCents: 3_500 });
+    seedVoucher({ initialCents: 5_000, remainingCents: 0 });
+    seedVoucher({
+      initialCents: 20_000,
+      remainingCents: 20_000,
+      expiresAt: new Date("2026-07-01T00:00:00.000Z"),
+    });
+    seedVoucher({ initialCents: 15_000, remainingCents: 15_000, active: false });
+    seedVoucher({ initialCents: 8_000, remainingCents: 8_000, expiresAt: null });
+    seedVoucher({ initialCents: 12_000, remainingCents: 6_000, currency: "CHF" });
+
+    const report = await service.outstandingLiability(NOW);
+
+    expect(report.asOf).toBe(NOW);
+    expect(report.rows.map((row) => row.currency)).toEqual(["CHF", "EUR"]);
+    expect(report.rows[1]).toEqual({
+      currency: "EUR",
+      voucherCount: 5,
+      issuedCents: 58_000,
+      redeemedCents: 11_500,
+      outstandingCents: 11_500,
+      outstandingVoucherCount: 2,
+      lapsedCents: 35_000,
+    });
+    expect(report.rows[0]).toEqual({
+      currency: "CHF",
+      voucherCount: 1,
+      issuedCents: 12_000,
+      redeemedCents: 6_000,
+      outstandingCents: 6_000,
+      outstandingVoucherCount: 1,
+      lapsedCents: 0,
+    });
+    expect(report.outstandingCents).toBe(17_500);
+
+    const live = db.vouchers.filter(
+      (row) =>
+        row.active === true &&
+        (row.remainingCents as number) > 0 &&
+        (row.expiresAt === null || (row.expiresAt as Date) > NOW),
+    );
+    expect(report.outstandingCents).toBe(
+      live.reduce((sum, row) => sum + (row.remainingCents as number), 0),
+    );
+  });
+
+  it("moves money out of the outstanding column the moment a card lapses", async () => {
+    seedVoucher({ initialCents: 10_000, remainingCents: 10_000, expiresAt: NOW });
+    const before = await service.outstandingLiability(new Date(NOW.getTime() - 1));
+    const after = await service.outstandingLiability(NOW);
+
+    expect(before.outstandingCents).toBe(10_000);
+    expect(before.rows[0]?.lapsedCents).toBe(0);
+    expect(after.outstandingCents).toBe(0);
+    expect(after.rows[0]?.lapsedCents).toBe(10_000);
+    expect(after.rows[0]?.issuedCents).toBe(10_000);
+  });
+
+  it("reports nothing rather than throwing when no voucher was ever sold", async () => {
+    await expect(service.outstandingLiability(NOW)).resolves.toEqual({
+      asOf: NOW,
+      rows: [],
+      outstandingCents: 0,
+    });
+  });
+});

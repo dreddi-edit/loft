@@ -5,15 +5,21 @@ import { requireAdminPageSession } from "../lib/auth";
 import { formatSalonTime, toDateInputValue } from "../lib/admin-datetime";
 import { getAdminLocale } from "../lib/admin-locale-server";
 import { AppointmentWorkspace } from "./AppointmentWorkspace";
+import { AuditWorkspace } from "./AuditWorkspace";
 import { BusinessHoursEditor } from "./BusinessHoursEditor";
 import { CalendarWorkspace } from "./CalendarWorkspace";
 import { CallLogWorkspace } from "./CallLogWorkspace";
 import { CustomerEditor } from "./CustomerEditor";
+import { GdprWorkspace } from "./GdprWorkspace";
 import { NotificationWorkspace } from "./NotificationWorkspace";
 import { ProductWorkspace } from "./ProductWorkspace";
+import { RecurringWorkspace } from "./RecurringWorkspace";
 import { ReportsWorkspace } from "./ReportsWorkspace";
+import { ReviewWorkspace } from "./ReviewWorkspace";
 import { ServiceEditor } from "./ServiceEditor";
 import { StaffWorkspace } from "./StaffWorkspace";
+import { VoucherWorkspace } from "./VoucherWorkspace";
+import { WaitlistWorkspace } from "./WaitlistWorkspace";
 
 export async function AdminSectionPage({ section }: { section: string }) {
   await requireAdminPageSession();
@@ -143,6 +149,30 @@ export async function AdminSectionPage({ section }: { section: string }) {
   if (section === "notifications") {
     const notifications = await salonRepository.listNotifications();
     return <NotificationWorkspace notifications={notifications} locale={locale} />;
+  }
+
+  if (section === "waitlist") {
+    return <WaitlistWorkspace locale={locale} />;
+  }
+
+  if (section === "vouchers") {
+    return <VoucherWorkspace locale={locale} />;
+  }
+
+  if (section === "gdpr") {
+    return <GdprWorkspace locale={locale} />;
+  }
+
+  if (section === "audit-log") {
+    return <AuditWorkspace locale={locale} />;
+  }
+
+  if (section === "reviews") {
+    return <ReviewWorkspace locale={locale} />;
+  }
+
+  if (section === "recurring") {
+    return <RecurringWorkspace locale={locale} />;
   }
 
   redirect("/dashboard");

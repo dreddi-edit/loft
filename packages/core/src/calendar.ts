@@ -77,6 +77,9 @@ const FEED_TOKEN_CONTEXT = "hair-simo:staff-calendar-feed";
 const FEED_TOKEN_ERROR = "STAFF_FEED_TOKEN_INVALID";
 const SAFE_TOKEN_ID = /^[A-Za-z0-9_-]{1,128}$/;
 const UNSAFE_UID_CHARS = /[^A-Za-z0-9._-]/g;
+// A CAL-ADDRESS is interpolated raw after "mailto:", so anything that could close the
+// property or open a new content line has to be rejected before it gets there.
+const SAFE_CAL_ADDRESS = /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/;
 // Everything C0/C1 except CR and LF, which are escaped into a literal \n instead.
 // eslint-disable-next-line no-control-regex -- RFC 5545 forbids these in TEXT values
 const CONTROL_CHARS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
@@ -315,6 +318,16 @@ export function escapeIcsText(value: string): string {
     .replace(/[;,]/g, (match) => `\\${match}`);
 }
 
+/**
+ * Prepare a URI value. RFC 5545 §3.3.13 gives URI no content escaping at all, so running
+ * a URL through {@link escapeIcsText} would leave a literal backslash in front of any
+ * comma or semicolon and hand the client a broken link. Only the characters that could
+ * end the content line are removed.
+ */
+function icsUriValue(value: string): string {
+  return value.replace(CONTROL_CHARS, "").replace(/\r\n|\n|\r/g, "");
+}
+
 /** Escape a parameter value per RFC 6868 and quote it when it carries a separator. */
 export function escapeIcsParam(value: string): string {
   const escaped = value
@@ -367,7 +380,22 @@ function serialize(lines: string[]): string {
 export function appointmentUid(appointmentId: string, domain: string = ICS_UID_DOMAIN): string {
   const local = String(appointmentId).replace(UNSAFE_UID_CHARS, "");
   if (!local) throw new Error("ICS_INVALID_APPOINTMENT_ID");
-  return `${local}@${domain}`;
+  const host = String(domain).replace(UNSAFE_UID_CHARS, "");
+  if (!host) throw new Error("ICS_INVALID_UID_DOMAIN");
+  return `${local}@${host}`;
+}
+
+/**
+ * A CAL-ADDRESS that is safe to interpolate after `mailto:`, or `null`.
+ *
+ * `ORGANIZER` and `ATTENDEE` are the only properties whose value is not run through
+ * {@link escapeIcsText}, because an escaped address is not a valid URI. An address
+ * carrying a CR/LF would therefore end the content line and let whatever follows be
+ * parsed as a new property — calendar injection through a stored e-mail address.
+ */
+function calendarAddress(value: string | null | undefined): string | null {
+  const trimmed = String(value ?? "").trim();
+  return SAFE_CAL_ADDRESS.test(trimmed) ? trimmed : null;
 }
 
 /**
@@ -444,6 +472,22 @@ function dateTimeLine(name: string, instant: Date, timeMode: IcsTimeMode): strin
   return `${name};TZID=${escapeIcsParam(SALON_TIME_ZONE)}:${salonStamp(instant)}`;
 }
 
+/**
+ * DTSTART/DTEND as a pair, because they have to stay ordered.
+ *
+ * On the October fall-back Sunday two distinct instants share one wall clock, so an event
+ * inside that hour would serialise with DTEND equal to or before DTSTART, which RFC 5545
+ * forbids and clients render as a zero-length event. That event alone falls back to
+ * unambiguous UTC stamps; `endsAt > startsAt` is already guaranteed, so UTC is always
+ * strictly ordered.
+ */
+function eventTimeLines(start: Date, end: Date, timeMode: IcsTimeMode): [string, string] {
+  if (timeMode === "tzid" && salonStamp(end) <= salonStamp(start)) {
+    return [dateTimeLine("DTSTART", start, "utc"), dateTimeLine("DTEND", end, "utc")];
+  }
+  return [dateTimeLine("DTSTART", start, timeMode), dateTimeLine("DTEND", end, timeMode)];
+}
+
 function alarmTrigger(minutes: number): string {
   if (minutes % 60 === 0) return `-PT${minutes / 60}H`;
   return `-PT${minutes}M`;
@@ -486,11 +530,12 @@ function attendeeLine(name: string | null, email: string): string {
 }
 
 function resolveOrganizer(options: IcsBuildOptions): { name: string; email: string } {
-  const email =
+  const configured =
     options.organizerEmail?.trim() ||
     process.env.SALON_CALENDAR_ORGANIZER_EMAIL?.trim() ||
     process.env.GCP_GMAIL_SENDER?.trim() ||
     DEFAULT_ORGANIZER_EMAIL;
+  const email = calendarAddress(configured) ?? DEFAULT_ORGANIZER_EMAIL;
   return { name: options.organizerName?.trim() || DEFAULT_ORGANIZER_NAME, email };
 }
 
@@ -579,8 +624,7 @@ function buildEventLines(appointment: ParsedAppointment, context: EventContext):
 
   lines.push(`UID:${appointmentUid(appointment.id, context.uidDomain)}`);
   lines.push(`DTSTAMP:${utcStamp(context.now)}`);
-  lines.push(dateTimeLine("DTSTART", appointment.startsAt, context.timeMode));
-  lines.push(dateTimeLine("DTEND", appointment.endsAt, context.timeMode));
+  lines.push(...eventTimeLines(appointment.startsAt, appointment.endsAt, context.timeMode));
   lines.push(`SEQUENCE:${context.sequence}`);
   lines.push(`STATUS:${icsStatus(appointment.status)}`);
   lines.push("TRANSP:OPAQUE");
@@ -589,11 +633,12 @@ function buildEventLines(appointment: ParsedAppointment, context: EventContext):
   lines.push(`LOCATION:${escapeIcsText(strings.location)}`);
   lines.push(organizerLine(context.organizer.name, context.organizer.email));
 
-  if (context.withAttendee && appointment.customerEmail) {
-    lines.push(attendeeLine(appointment.customerName ?? null, appointment.customerEmail));
+  const attendeeEmail = context.withAttendee ? calendarAddress(appointment.customerEmail) : null;
+  if (attendeeEmail) {
+    lines.push(attendeeLine(appointment.customerName ?? null, attendeeEmail));
   }
   if (context.audience === "customer" && appointment.manageUrl?.trim()) {
-    lines.push(`URL:${escapeIcsText(appointment.manageUrl.trim())}`);
+    lines.push(`URL:${icsUriValue(appointment.manageUrl.trim())}`);
   }
   if (appointment.createdAt) lines.push(`CREATED:${utcStamp(appointment.createdAt)}`);
   if (appointment.updatedAt) lines.push(`LAST-MODIFIED:${utcStamp(appointment.updatedAt)}`);
@@ -632,15 +677,18 @@ function buildSingleEventCalendar(
   const locale = resolveLocale(options.locale ?? appointment.locale);
   const timeMode = resolveTimeMode(options.timeMode);
   const organizer = resolveOrganizer(options);
-  const withAttendee = Boolean(appointment.customerEmail);
+  const withAttendee = calendarAddress(appointment.customerEmail) !== null;
 
   // METHOD:REQUEST and METHOD:CANCEL are iTIP messages and require an attendee. Without
   // a customer e-mail address the file is just something to import, so it is published.
   const method: IcsMethod = withAttendee ? (intent === "cancel" ? "CANCEL" : "REQUEST") : "PUBLISH";
 
-  const baseSequence = options.sequence ?? appointmentSequence(appointment);
+  const pinnedSequence = options.sequence;
+  const baseSequence = pinnedSequence ?? appointmentSequence(appointment);
   const sequence =
-    intent === "cancel" ? Math.min(baseSequence + (options.sequence ? 0 : 1), MAX_SEQUENCE) : baseSequence;
+    intent === "cancel"
+      ? Math.min(baseSequence + (pinnedSequence === undefined ? 1 : 0), MAX_SEQUENCE)
+      : baseSequence;
 
   const context: EventContext = {
     audience: "customer",
@@ -878,8 +926,7 @@ export function staffFeedUrl(
 ): string {
   const token = createStaffFeedToken(staffId);
   const normalized = baseUrl.replace(/\/+$/, "");
-  const withScheme =
-    scheme === "webcal" ? normalized.replace(/^https?:/, "webcal:") : normalized;
+  const withScheme = scheme === "webcal" ? normalized.replace(/^https?:/, "webcal:") : normalized;
   return `${withScheme}/api/calendar/staff/${token}.ics`;
 }
 
@@ -1011,15 +1058,19 @@ export async function buildStaffFeedForToken(
   const staff = (await prisma.staffProfile.findUnique({
     where: { id: staffId },
     select: { id: true, displayName: true, locale: true, user: { select: { active: true } } },
-  })) as { id: string; displayName: string; locale: string; user: { active: boolean } | null } | null;
+  })) as {
+    id: string;
+    displayName: string;
+    locale: string;
+    user: { active: boolean } | null;
+  } | null;
 
   if (!staff || !staff.user?.active) throw new Error("STAFF_FEED_NOT_FOUND");
 
   const locale = resolveLocale(options.locale ?? staff.locale);
   const appointments = await loadStaffFeedAppointments(staffId, options.range);
   const calendarName =
-    options.calendarName?.trim() ||
-    `${CALENDAR_STRINGS[locale].feedName} – ${staff.displayName}`;
+    options.calendarName?.trim() || `${CALENDAR_STRINGS[locale].feedName} – ${staff.displayName}`;
   const calendar = buildStaffFeed(appointments, { ...options, locale, calendarName });
 
   return {

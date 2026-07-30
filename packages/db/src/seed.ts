@@ -1,6 +1,13 @@
 import { type RoleKey } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { prisma } from "./client";
+import {
+  DEFAULT_TENANT_ID,
+  DEFAULT_TENANT_SLUG,
+  tenantEmailKey,
+  tenantSkuKey,
+  tenantSlugKey,
+} from "./tenant-context";
 
 const locales = ["de", "it", "fr", "en"] as const;
 
@@ -10,6 +17,35 @@ const team = [
   { email: "helga@hairsimo.it", firstName: "Helga", lastName: "", role: "staff" as RoleKey, locale: "de" },
   { email: "tina@hairsimo.it", firstName: "Tina", lastName: "", role: "staff" as RoleKey, locale: "de" },
 ];
+
+async function seedTenant() {
+  const settings = {
+    noShowDepositThresholdCents: Number(process.env.NO_SHOW_DEPOSIT_THRESHOLD_CENTS ?? 5000),
+    noShowDepositPercentage: Number(process.env.NO_SHOW_DEPOSIT_PERCENTAGE ?? 30),
+  };
+  await prisma.tenant.upsert({
+    where: { id: DEFAULT_TENANT_ID },
+    update: {
+      slug: DEFAULT_TENANT_SLUG,
+      displayName: "Hair Simo",
+      status: "active",
+      timeZone: "Europe/Rome",
+      defaultLocale: "it",
+      settings,
+    },
+    create: {
+      id: DEFAULT_TENANT_ID,
+      slug: DEFAULT_TENANT_SLUG,
+      displayName: "Hair Simo",
+      legalName: "Hair Simo",
+      status: "active",
+      timeZone: "Europe/Rome",
+      defaultLocale: "it",
+      currency: "EUR",
+      settings,
+    },
+  });
+}
 
 async function seedRoles() {
   for (const key of ["owner", "manager", "staff"] as RoleKey[]) {
@@ -87,7 +123,7 @@ async function seedServices() {
 
   for (const service of baseServices) {
     const created = await prisma.service.upsert({
-      where: { slug: service.slug },
+      where: tenantSlugKey(service.slug),
       update: {
         category: service.category,
         durationMin: service.durationMin,
@@ -167,7 +203,7 @@ async function seedTeam(passwordHash: string) {
 
   for (const member of team) {
     const user = await prisma.user.upsert({
-      where: { email: member.email },
+      where: tenantEmailKey(member.email),
       update: {
         passwordHash,
         firstName: member.firstName,
@@ -181,6 +217,7 @@ async function seedTeam(passwordHash: string) {
         firstName: member.firstName,
         lastName: member.lastName,
         locale: member.locale,
+        tenantId: DEFAULT_TENANT_ID,
       },
     });
 
@@ -190,12 +227,14 @@ async function seedTeam(passwordHash: string) {
         displayName: member.firstName,
         locale: member.locale,
         isBookable: true,
+        tenantId: DEFAULT_TENANT_ID,
       },
       create: {
         userId: user.id,
         displayName: member.firstName,
         locale: member.locale,
         isBookable: true,
+        tenantId: DEFAULT_TENANT_ID,
       },
     });
 
@@ -238,7 +277,7 @@ async function seedProducts() {
 
   for (const product of products) {
     await prisma.product.upsert({
-      where: { sku: product.sku },
+      where: tenantSkuKey(product.sku),
       update: product,
       create: product,
     });
@@ -252,6 +291,7 @@ async function main() {
   }
 
   const passwordHash = await bcrypt.hash(password, 12);
+  await seedTenant();
   await removeLegacyDemoData();
   await seedRoles();
   await seedServices();

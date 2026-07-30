@@ -8,6 +8,7 @@ import {
   type AvailabilityWindow,
   type BlockedInterval,
 } from "./availability-engine";
+import { evaluateNoShowPolicy, noShowPolicyAppointmentFields } from "./no-show-policy";
 import { salonRepository } from "./repositories";
 import { endOfSalonDay, parseSalonDay, salonDayOfWeek, startOfSalonDay } from "./time";
 
@@ -294,6 +295,13 @@ export class BookingService {
 
     await salonRepository.recordConsent(customer.id, "terms", true, "booking");
 
+    const policyFields = noShowPolicyAppointmentFields(
+      evaluateNoShowPolicy({
+        servicePriceCents: service.priceCents,
+        sourceChannel: input.sourceChannel,
+      }),
+    );
+
     for (const staffId of available) {
       try {
         return await salonRepository.createAppointmentIfAvailable({
@@ -305,6 +313,7 @@ export class BookingService {
           blockedEndsAt,
           locale: input.locale,
           sourceChannel: input.sourceChannel,
+          ...policyFields,
         });
       } catch (error) {
         if (error instanceof Error && error.message === "SLOT_NOT_AVAILABLE" && !input.staffId)
