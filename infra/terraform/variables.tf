@@ -100,7 +100,7 @@ variable "db_password" {
 
 variable "enable_load_balancer" {
   type        = bool
-  description = "Create the external HTTPS load balancer. Required in production: both Cloud Run services only accept load balancer ingress."
+  description = "Create the external HTTPS load balancer. Required in production. When false, Cloud Run accepts all ingress (run.app URLs) for staging smoke tests."
   default     = false
 }
 

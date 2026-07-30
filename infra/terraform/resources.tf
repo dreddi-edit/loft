@@ -284,7 +284,8 @@ resource "google_cloud_run_v2_service" "web" {
   name     = "hair-simo-web"
   location = var.region
   labels   = local.labels
-  ingress  = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
+  # Without a load balancer, INTERNAL_LOAD_BALANCER makes the run.app URL return 404.
+  ingress  = var.enable_load_balancer ? "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER" : "INGRESS_TRAFFIC_ALL"
 
   template {
     service_account = google_service_account.run.email
@@ -455,6 +456,12 @@ resource "google_cloud_run_v2_service" "web" {
     percent = 100
   }
 
+  # API returns a default top-level scaling block and gcloud stamps client metadata;
+  # neither is managed in this config. Ignoring stops perpetual plan noise.
+  lifecycle {
+    ignore_changes = [client, client_version, scaling]
+  }
+
   depends_on = [google_artifact_registry_repository.hair_simo]
 }
 
@@ -462,7 +469,7 @@ resource "google_cloud_run_v2_service" "admin" {
   name     = "hair-simo-admin"
   location = var.region
   labels   = local.labels
-  ingress  = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
+  ingress  = var.enable_load_balancer ? "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER" : "INGRESS_TRAFFIC_ALL"
 
   template {
     service_account = google_service_account.run.email
@@ -573,11 +580,16 @@ resource "google_cloud_run_v2_service" "admin" {
     type    = "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST"
     percent = 100
   }
+
+  lifecycle {
+    ignore_changes = [client, client_version, scaling]
+  }
 }
 
 # Serverless NEGs do not authenticate to Cloud Run, so the load balancer can only
-# reach these services when they are invokable by allUsers. The actual perimeter is
-# ingress = INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER plus the Cloud Armor policies.
+# reach these services when they are invokable by allUsers. The perimeter when the
+# LB is enabled is ingress = INTERNAL_LOAD_BALANCER plus Cloud Armor; without an LB,
+# ingress is ALL and Armor is not in the path.
 resource "google_cloud_run_v2_service_iam_member" "web_public" {
   project  = var.project_id
   location = google_cloud_run_v2_service.web.location

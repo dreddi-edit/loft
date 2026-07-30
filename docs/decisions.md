@@ -27,7 +27,7 @@ All external SaaS dependencies replaced with Google Cloud services:
 | Notifications | Twilio SMS/WhatsApp + SMTP log | Pub/Sub + Cloud Tasks + Gmail API |
 | Rate limiting | In-memory (dev) | Cloud Armor at load balancer (prod) + in-memory fallback (dev) |
 | Payments | Stripe PaymentIntent | Google Pay + PSP gateway webhook |
-| Database | Local PostgreSQL / Cloud SQL | AlloyDB for PostgreSQL |
+| Database | Local PostgreSQL / Cloud SQL for PostgreSQL 16 | AlloyDB (reversed 2026-07-29 — too expensive for salon volume) |
 | Deployment | Docker Compose (local) | Cloud Run + Terraform |
 
 *The Database row above was the call made on 2026-07-28. It was reversed the next day —

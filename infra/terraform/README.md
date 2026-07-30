@@ -178,6 +178,9 @@ printf '%s' 'postgresql://hair_simo_app:REAL_PASSWORD@10.x.x.x:5432/hair_simo?ss
   | gcloud secrets versions add hair-simo-database-url --data-file=-
 ```
 
+URL-encode the password (`urllib.parse.quote` / `encodeURIComponent`). Characters like
+`+`, `/`, `@`, `#` or `:` break Prisma (`P1013: invalid port number`) if left raw.
+
 `sslmode=require` is not optional — `ssl_mode = "ENCRYPTED_ONLY"` rejects plaintext.
 
 **`connection_limit` is load-bearing.** Prisma opens a pool per Cloud Run instance, and
@@ -266,14 +269,15 @@ Set `enable_cdn = false` to turn all of it off without touching the routing.
 
 ## Ingress and reachability
 
-Both Cloud Run services set `ingress = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"`.
-The `*.run.app` URLs are not reachable, which is the point: previously anyone
-could hit them directly and bypass Cloud Armor entirely.
+With `enable_load_balancer = true`, both Cloud Run services set
+`ingress = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"` so `*.run.app` URLs are not
+reachable and Cloud Armor cannot be bypassed. With it `false` (staging without an
+LB), ingress is `INGRESS_TRAFFIC_ALL` so the run.app URLs work for smoke tests.
 
 Consequences:
 
-- **`enable_load_balancer` must be `true` in production.** With it `false` nothing is
-  publicly reachable and the reminder cron cannot run.
+- **`enable_load_balancer` must be `true` in production.** Staging may leave it
+  `false` and use the run.app URLs directly.
 - `NEXT_PUBLIC_BASE_URL`, `GCP_CLOUD_TASKS_HANDLER_URL` and the Cloud Scheduler target
   are all derived from `var.web_domain` / `var.admin_domain`. No hardcoded project
   numbers.

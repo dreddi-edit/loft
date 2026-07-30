@@ -270,29 +270,30 @@ NEXT_PUBLIC_BASE_URL=https://<web-url>
 ### Phase C — APIs
 - [ ] Alle APIs enabled (Abschnitt 6)
 
-### Phase D — Terraform staging
-- [ ] `terraform.tfvars` ausgefüllt
-- [ ] `terraform plan` reviewed
-- [ ] `terraform apply` (mit Bestätigung)
+### Phase D — Terraform staging ✅
+- [x] `terraform.tfvars` ausgefüllt
+- [x] `terraform plan` reviewed
+- [x] `terraform apply` — Cloud SQL (nicht AlloyDB), Direct VPC, Secrets
 
-### Phase E — Deploy Apps
-- [ ] Docker images gebaut + gepusht
-- [ ] Cloud Run Services laufen
-- [ ] `DATABASE_URL` + Secrets gesetzt
-- [ ] DB seed/migrate auf Cloud SQL for PostgreSQL 16
+### Phase E — Deploy Apps ✅ (staging)
+- [x] Docker images gebaut + gepusht (`bcc0cb6`, linux/amd64)
+- [x] Cloud Run Services laufen (web + admin)
+- [x] `DATABASE_URL` + Secrets gesetzt (Cloud SQL private IP, URL-encoded password)
+- [x] DB migrate + seed auf Cloud SQL for PostgreSQL 16 (`hair-simo-migrate` Job)
+- [x] Smoke: `/de`, `/login`, `/api/services` (5), `/api/staff` (4)
 
 ### Phase F — Services anbinden (einzeln)
 - [ ] Vertex AI Gemini (Chat)
 - [ ] Gmail API (E-Mails)
-- [ ] Cloud Scheduler → `/api/cron/reminders` und `/api/cron/sweep`
+- [x] Cloud Scheduler → `/api/cron/reminders` und `/api/cron/sweep`
 - [ ] Dialogflow CX (Voice) — später
 - [ ] Google Pay + PSP — später
 - [ ] Identity Platform (Admin Auth) — später
 
 ### Phase G — Production
-- [ ] Domains + SSL
+- [ ] Domains + SSL (`enable_load_balancer = true`)
 - [ ] `PAYMENTS_MOCK_ENABLED=false`
-- [ ] PR #1 nach `master` mergen
+- [ ] PR #3 nach `master` mergen (PR #1 bereits gemerged)
 
 ---
 
@@ -349,7 +350,7 @@ Führ lint, typecheck, test und build aus und fixe Fehler minimal-invasiv.
 ## 14) Links
 
 - Repo: https://github.com/dreddi-edit/loft
-- PR: https://github.com/dreddi-edit/loft/pull/1
+- PR: https://github.com/dreddi-edit/loft/pull/3
 - Go-Live: `docs/GO-LIVE.md`
 - Terraform: `infra/terraform/README.md`
 - Cursor CLI: https://cursor.com/docs/cli/overview
